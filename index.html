@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Fighter's Quest — Stats</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <noscript>
+    <div style="background:#111;color:#fff;padding:12px;text-align:center">JavaScript is disabled — enable JS to use the app.</div>
+  </noscript>
+  <script>
+    // Inline quick-check badge so we can see if inline scripts run
+    try{
+      const el = document.createElement('div');
+      el.id = 'inline-badge';
+      el.textContent = 'Inline JS OK';
+      el.style.position = 'fixed'; el.style.left='12px'; el.style.top='12px';
+      el.style.padding='6px 8px'; el.style.background='rgba(0,0,0,0.4)'; el.style.color='#bfeaff';
+      el.style.border='1px solid rgba(190,234,255,0.08)'; el.style.borderRadius='6px'; el.style.zIndex='99999';
+      document.addEventListener('DOMContentLoaded', ()=>document.body.appendChild(el));
+      console.log('Inline check appended');
+    }catch(e){console.warn('Inline badge failed', e)}
+  </script>
+
+  <div class="app-bg">
+    <div class="container">
+      <!-- Screens: Stats (default), Challenges, Quests -->
+      <div id="screen-stats" class="screen">
+        <div class="status-card">
+          <div id="screen-breadcrumb" style="position:absolute;right:18px;top:12px;color:#9bd8ff;font-size:12px"></div>
+          <div class="status-header">
+            <div class="status-title">STATS</div>
+            <div class="status-top">
+              <div class="level">
+                <div class="avatar-upload" id="avatar-upload">
+                  <img id="player-avatar-img" class="player-avatar" src="" alt="Avatar" title="Click to upload" />
+                  <input id="player-avatar-input" type="file" accept="image/*" style="display:none" />
+                </div>
+                <div>
+                  <div class="level-number" id="level-number">18</div>
+                  <div class="level-meta">
+                    <div class="level-label">LEVEL</div>
+                    <div class="title">TITLE: <span id="title">Wolf Assassin</span></div>
+                  </div>
+                </div>
+              </div>
+              <div class="controls">
+                <button id="decrease-level">-</button>
+                <button id="increase-level">+</button>
+                <button id="reset-all">Reset All</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="bars">
+            <div class="bar-row">
+              <div class="bar-label"><span class="icon hp-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" xmlns="http://www.w3.org/2000/svg"><path d="M12 21s-8.5-6.6-8.5-11.3A5.5 5.5 0 0 1 12 4.5 5.5 5.5 0 0 1 20.5 9.7C20.5 14.4 12 21 12 21z"/></svg></span>HP</div>
+              <div class="bar-wrap">
+                <div class="bar-bg"><div class="bar-fill hp" id="hp-fill"></div></div>
+                <div class="bar-text" id="hp-text">2220 / 2220</div>
+              </div>
+            </div>
+            <div class="bar-row">
+              <div class="bar-label"><span class="icon mp-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" xmlns="http://www.w3.org/2000/svg"><path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z"/></svg></span>MP</div>
+              <div class="bar-wrap">
+                <div class="bar-bg"><div class="bar-fill mp" id="mp-fill"></div></div>
+                <div class="bar-text" id="mp-text">350 / 350</div>
+              </div>
+            </div>
+            <div class="bar-row stam-row">
+              <div class="bar-label stam-label"><span class="icon">⚡</span>STAMINA</div>
+              <div class="bar-wrap">
+                <div class="bar-bg"><div class="bar-fill stam" id="stam-fill"></div></div>
+                <div class="bar-text" id="stam-text">0 / 100</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="xp-row">
+            <div class="xp-label">XP</div>
+            <div class="bar-wrap">
+              <div class="bar-bg"><div class="bar-fill xp" id="xp-fill"></div></div>
+              <div class="bar-text" id="xp-text">0 / 100</div>
+            </div>
+          </div>
+
+          <div class="stats-grid">
+            <div class="left">
+              <div class="stat">
+                <div class="stat-label"><span class="icon">🏋️</span>STR</div>
+                <div class="stat-value" id="str">48</div>
+              </div>
+              <div class="stat">
+                <div class="stat-label"><span class="icon">🏃</span>AGI</div>
+                <div class="stat-value" id="agi">27</div>
+              </div>
+              <div class="stat">
+                <div class="stat-label"><span class="icon">👁️</span>PER</div>
+                <div class="stat-value" id="per">27</div>
+              </div>
+            </div>
+            <div class="right">
+              <div class="stat">
+                <div class="stat-label"><span class="icon">🛡️</span>VIT</div>
+                <div class="stat-value" id="vit">27</div>
+              </div>
+              <div class="stat">
+                <div class="stat-label"><span class="icon">🧠</span>INT</div>
+                <div class="stat-value" id="int">27</div>
+              </div>
+              <div class="available">
+                <div class="small-label">Ability Points</div>
+                <div class="avail-value" id="available">12</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tasks moved to separate Tasks screen -->
+        </div>
+      </div>
+
+      <div id="screen-challenges" class="screen hidden">
+        <div class="status-card">
+          <div class="status-title">CHALLENGES</div>
+          <div class="req-list" id="challenges-list">
+            <!-- Fallback static list (visible if JS doesn't run) -->
+            <div class="challenge"><button class="task-btn" data-id="c1" data-xp="60"><span class="task-main">50 push-ups — 50</span><span class="task-check">✓</span></button></div>
+            <div class="challenge"><button class="task-btn" data-id="c2" data-xp="120"><span class="task-main">100 push-ups — 100</span><span class="task-check">✓</span></button></div>
+            <div class="challenge"><button class="task-btn" data-id="c3" data-xp="200"><span class="task-main">150 push-ups — 150</span><span class="task-check">✓</span></button></div>
+            <div class="challenge"><button class="task-btn" data-id="c4" data-xp="50"><span class="task-main">50 sit-ups — 50</span><span class="task-check">✓</span></button></div>
+            <div class="challenge"><button class="task-btn" data-id="c5" data-xp="110"><span class="task-main">100 sit-ups — 100</span><span class="task-check">✓</span></button></div>
+          </div>
+          <div style="margin-top:12px">
+            <button id="back-from-challenges">Back</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="screen-tasks" class="screen hidden">
+        <div class="status-card">
+          <div class="status-title">TASKS</div>
+          <div class="req-list">
+            <div class="req-item">
+              <button id="daily-complete" class="task-btn" data-key="daily" data-xp="20" aria-pressed="false">
+                <span class="task-main">Daily: <span id="daily-req">25</span> jumping jacks</span>
+                <span class="task-check" aria-hidden="true">✓</span>
+              </button>
+            </div>
+            <div class="req-item">
+              <button id="weekly-push-complete" class="task-btn" data-key="weeklyPush" data-xp="40" aria-pressed="false">
+                <span class="task-main">Weekly: <span id="weekly-push">25</span> pushups</span>
+                <span class="task-check" aria-hidden="true">✓</span>
+              </button>
+            </div>
+            <div class="req-item">
+              <button id="weekly-squat-complete" class="task-btn" data-key="weeklySquat" data-xp="40" aria-pressed="false">
+                <span class="task-main">Weekly: <span id="weekly-squat">25</span> squats</span>
+                <span class="task-check" aria-hidden="true">✓</span>
+              </button>
+            </div>
+            <div class="req-item">
+              <button id="weekly-sit-complete" class="task-btn" data-key="weeklySit" data-xp="40" aria-pressed="false">
+                <span class="task-main">Weekly: <span id="weekly-sit">25</span> sit-ups</span>
+                <span class="task-check" aria-hidden="true">✓</span>
+              </button>
+            </div>
+            <div class="req-item small-actions">
+              <button id="reset-daily">Reset Day</button>
+              <button id="reset-week">Reset Week</button>
+            </div>
+          </div>
+          <div style="margin-top:12px">
+            <button id="back-from-tasks">Back</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="screen-quests" class="screen hidden">
+        <div class="status-card">
+          <div class="status-title">QUESTS</div>
+          <div id="quests-list">
+            <!-- Fallback static quests -->
+            <div class="opponent"><div class="meta">Wild Wolf — Lv. 3</div><div><button>Fight</button></div></div>
+            <div class="opponent"><div class="meta">Bandit Scout — Lv. 6</div><div><button>Fight</button></div></div>
+            <div class="opponent"><div class="meta">Orc Brute — Lv. 11</div><div><button>Fight</button></div></div>
+          </div>
+          <div class="quests-pager" id="quests-pager" style="margin:10px 0;display:flex;align-items:center;gap:8px;justify-content:center">
+            <button id="quests-prev">« Prev</button>
+            <div id="quests-page" style="min-width:90px;text-align:center">1 / 1</div>
+            <button id="quests-next">Next »</button>
+          </div>
+          <div id="battle-log" style="margin-top:12px;color:#dff6ff;min-height:60px"></div>
+          <div style="margin-top:12px">
+            <button id="back-from-quests">Back</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Battle screen: shown when player starts a quest battle -->
+      <div id="screen-battle" class="screen hidden">
+        <div class="status-card">
+          <div class="status-title">BATTLE</div>
+          <div style="margin-bottom:8px"><button id="back-from-battle">← Back</button></div>
+          <div class="battle-area">
+            <div class="battle-cards">
+              <div class="card player-card">
+                <div class="card-title">YOU</div>
+                <div class="card-portrait" id="battle-player-portrait">🙂</div>
+                <div class="card-level">Lv.<span id="battle-player-level">1</span></div>
+                <div class="card-bar"><div class="label">HP</div><div class="bar-bg small"><div id="battle-player-hp" class="bar-fill hp"></div></div><div class="val" id="battle-player-hp-text">0 / 0</div></div>
+              </div>
+              <div class="card enemy-card">
+                <div class="card-title" id="battle-enemy-name">Enemy</div>
+                <div class="card-portrait" id="battle-enemy-portrait">👾</div>
+                <div class="card-level">Lv.<span id="battle-enemy-level">1</span></div>
+                <div class="card-bar"><div class="label">HP</div><div class="bar-bg small"><div id="battle-enemy-hp" class="bar-fill hp"></div></div><div class="val" id="battle-enemy-hp-text">0 / 0</div></div>
+              </div>
+            </div>
+            <div class="battle-log" id="battle-area-log">Battle log will appear here...</div>
+            <div class="battle-actions">
+              <button id="battle-attack" class="fight-btn">Attack</button>
+              <button id="battle-defend" class="fight-btn defend">Defend</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="bottom-nav">
+    <button data-screen="screen-stats" class="active">Stats</button>
+    <button data-screen="screen-tasks">Tasks</button>
+    <button data-screen="screen-challenges">Challenges</button>
+    <button data-screen="screen-quests">Quests</button>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
