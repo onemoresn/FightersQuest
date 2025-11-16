@@ -13,6 +13,12 @@ const defaultState = {
   xp: {cur: 0, toNext: 100},
   stats: {str:0, agi:0, per:0, vit:0, int:0},
   available: 0,
+  // inventory holds items the player owns
+  inventory: [],
+  // learned skills / magic
+  skills: [],
+  // equipped items (by slot)
+  equipment: {},
   // track which guides the user has seen per screen
   seenGuides: {},
   taskBase: {
@@ -129,6 +135,8 @@ function ensureHPMPForState(){
   }
   if(typeof state.stamina.max !== 'number') state.stamina.max = 100;
   if(typeof state.stamina.cur !== 'number') state.stamina.cur = Math.max(0, Math.min(state.stamina.max, Number(state.stamina) || 0));
+  // Ensure a title is present based on current level
+  try{ if(!state.title || typeof state.title !== 'string' || state.title.trim() === '') state.title = computeTitleForLevel(state.level); }catch(e){ console.warn('computeTitleForLevel init failed', e); }
 }
 
 // HP/MP scaling helpers: Level 1 => HP 100, MP 50
@@ -162,62 +170,30 @@ function applyStatsForLevel(level){
   state.mp.cur = Math.min(state.mp.cur || state.mp.max, state.mp.max);
 }
 
-// --- Auto-recovery configuration and helpers (fatigue, HP, MP) ---
-const RECOVER_INTERVAL_MS = 300; // 0.3 seconds per recovery tick
-const RECOVER_STAMINA_PER_TICK = 1; // restore stamina by 1 per tick
-const RECOVER_HP_PER_TICK = 1; // restore HP by 1 per tick
-const RECOVER_MP_PER_TICK = 1; // restore MP by 1 per tick
+// Get effective stats including equipment bonuses
+function getEffectiveStats(){
+  const base = Object.assign({}, state.stats || {});
+  const equip = state.equipment || {};
+  const eff = Object.assign({}, base);
+  try{
+    Object.keys(equip).forEach(slot=>{
+      const item = equip[slot];
+      if(!item) return;
+      // item.bonuses expected to be an object like { str: 2, vit: 1 }
+      const bonuses = item.bonuses || item.stats || {};
+      Object.keys(bonuses).forEach(k=>{
+        const val = Number(bonuses[k] || 0);
+        eff[k] = (eff[k] || 0) + val;
+      });
+    });
+  }catch(e){ console.warn('getEffectiveStats failed to accumulate equipment bonuses', e); }
+  return eff;
+}
 
-function applyRecoveryTick(ticks){
-  if(!ticks || ticks <= 0) return;
-  let changed = false;
-  // stamina increases (resource restores over time)
-  let stamDelta = 0;
-  if(state.stamina && typeof state.stamina.cur === 'number' && typeof state.stamina.max === 'number'){
-    const prevStam = state.stamina.cur || 0;
-    const newStam = Math.min(state.stamina.max, prevStam + ticks * RECOVER_STAMINA_PER_TICK);
-    stamDelta = Math.max(0, newStam - prevStam);
-    state.stamina.cur = newStam;
-    if(stamDelta) changed = true;
-  }
-  // hp increases
-  let hpDelta = 0;
-  if(state.hp && typeof state.hp.cur === 'number' && typeof state.hp.max === 'number'){
-    const prev = state.hp.cur;
-    const newHp = Math.min(state.hp.max, state.hp.cur + ticks * RECOVER_HP_PER_TICK);
-    hpDelta = Math.max(0, newHp - prev);
-    state.hp.cur = newHp;
-    if(hpDelta) changed = true;
-  }
-  // mp increases
-  let mpDelta = 0;
-  if(state.mp && typeof state.mp.cur === 'number' && typeof state.mp.max === 'number'){
-    const prevm = state.mp.cur;
-    const newMp = Math.min(state.mp.max, state.mp.cur + ticks * RECOVER_MP_PER_TICK);
-    mpDelta = Math.max(0, newMp - prevm);
-    state.mp.cur = newMp;
-    if(mpDelta) changed = true;
-  }
-  if(changed){
-    state.recoveryLast = Date.now();
-    saveState();
-    render();
-    // show small popups near the relevant UI elements
-    try{
-      if(hpDelta > 0){
-        const el = document.getElementById('hp-text') || document.getElementById('hp-fill');
-        showRecoveryPopup('hp', hpDelta, el);
-      }
-      if(mpDelta > 0){
-        const el = document.getElementById('mp-text') || document.getElementById('mp-fill');
-        showRecoveryPopup('mp', mpDelta, el);
-      }
-        if(stamDelta > 0){
-          const el = document.getElementById('stam-text');
-          showRecoveryPopup('stam', stamDelta, el);
-        }
-    }catch(e){console.warn('recovery popup failed', e)}
-  }
+function getEffectiveStat(key){
+  const eff = getEffectiveStats();
+  if(!eff) return (state.stats && state.stats[key]) || 0;
+  return typeof eff[key] === 'number' ? eff[key] : ((state.stats && state.stats[key]) || 0);
 }
 
 function showRecoveryPopup(type, amount, targetEl){
@@ -313,14 +289,161 @@ function tieredRequirement(base, level){
   return Math.max(1, Math.ceil(base * multiplier));
 }
 
+// Map numeric level into a human-friendly Title category
+function computeTitleForLevel(level){
+  const lv = Math.max(1, Number(level) || 1);
+  if(lv <= 10) return 'Rookie';
+  if(lv <= 20) return 'Novice';
+  if(lv <= 30) return 'Skilled';
+  if(lv <= 40) return 'Experienced';
+  if(lv <= 60) return 'Veteran';
+  if(lv <= 80) return 'Expert';
+  if(lv <= 120) return 'Elite';
+  if(lv <= 200) return 'Champion';
+  if(lv <= 350) return 'Master';
+  if(lv <= 599) return 'Grandmaster';
+  if(lv <= 799) return 'Mythic';
+  if(lv <= 949) return 'Ascendant';
+  if(lv <= 998) return 'Exalted';
+  return 'Legendary'; // 999+
+}
+
+// Compute a rank index (0-based) matching the title bands used in computeTitleForLevel
+function computeRankIndex(level){
+  const lv = Math.max(1, Number(level) || 1);
+  if(lv <= 10) return 0; // Rookie
+  if(lv <= 20) return 1; // Novice
+  if(lv <= 30) return 2; // Skilled
+  if(lv <= 40) return 3; // Experienced
+  if(lv <= 60) return 4; // Veteran
+  if(lv <= 80) return 5; // Expert
+  if(lv <= 120) return 6; // Elite
+  if(lv <= 200) return 7; // Champion
+  if(lv <= 350) return 8; // Master
+  if(lv <= 599) return 9; // Grandmaster
+  if(lv <= 799) return 10; // Mythic
+  if(lv <= 949) return 11; // Ascendant
+  if(lv <= 998) return 12; // Exalted
+  return 13; // Legendary
+}
+
+// Weekly bonus: increase weekly activities by 72 per rank index
+function computeWeeklyBonus(level){
+  const idx = computeRankIndex(level);
+  return idx * 72;
+}
+
+// Determine daily task amount and activity by level ranges
+function computeDailyTaskForLevel(level){
+  const lv = Math.max(1, Number(level) || 1);
+  // Default values (fallback)
+  let amount = state.taskBase && state.taskBase.dailyJumpingJacks ? state.taskBase.dailyJumpingJacks : 25;
+  let activity = 'jumping jacks';
+
+  if(lv >= 1 && lv <= 10){
+    amount = 25; activity = 'jumping jacks';
+  } else if(lv >= 21 && lv <= 30){
+    amount = 50; activity = 'jumping jacks';
+  } else if(lv >= 61 && lv <= 599){
+    amount = 25; activity = 'High knees';
+  } else if(lv >= 600){
+    amount = 25; activity = 'Burpees';
+  } else {
+    // for levels not explicitly covered, fall back to tiered requirement but keep 'jumping jacks'
+    amount = tieredRequirement(state.taskBase && state.taskBase.dailyJumpingJacks ? state.taskBase.dailyJumpingJacks : 25, lv);
+    activity = 'jumping jacks';
+  }
+  return { amount, activity };
+}
+
+// XP required to reach the next level. Uses a base value and scales with level,
+// applying modest growth and extra tier scaling every 5 levels.
+function xpToLevelUp(level){
+  const lv = Math.max(1, Number(level) || 1);
+  const base = 100; // XP needed at level 1
+  // linear growth per level plus small exponential-ish factor
+  const linear = base + (lv - 1) * 50;
+  // tier bonus every 5 levels
+  const tiers = Math.floor((lv - 1) / 5);
+  const tierMultiplier = 1 + tiers * 0.10;
+  return Math.max(10, Math.ceil(linear * tierMultiplier));
+}
+
 // --- Challenges & Quests data ---
 const CHALLENGES = [
-  {id:'c1', label:'50 push-ups', type:'pushups', amount:50, xp:60},
-  {id:'c2', label:'100 push-ups', type:'pushups', amount:100, xp:120},
-  {id:'c3', label:'150 push-ups', type:'pushups', amount:150, xp:200},
-  {id:'c4', label:'50 sit-ups', type:'situps', amount:50, xp:50},
-  {id:'c5', label:'100 sit-ups', type:'situps', amount:100, xp:110}
+  // Strength
+  {id:'c1', label:'50 push-ups', type:'pushups', amount:50, xp:60, category: 'Strength'},
+  {id:'c2', label:'100 push-ups', type:'pushups', amount:100, xp:120, category: 'Strength'},
+  {id:'c3', label:'150 push-ups', type:'pushups', amount:150, xp:200, category: 'Strength'},
+  {id:'c4', label:'50 sit-ups', type:'situps', amount:50, xp:50, category: 'Strength'},
+  {id:'c5', label:'100 sit-ups', type:'situps', amount:100, xp:110, category: 'Strength'},
+  // Cardio (samples)
+  {id:'c6', label:'2 km Run', type:'run', amount:2, xp:80, category: 'Cardio'},
+  {id:'c7', label:'200 Jumping Jacks', type:'jumpingjacks', amount:200, xp:60, category: 'Cardio'},
+  {id:'c8', label:'30-minute Cycling', type:'cycling', amount:30, xp:100, category: 'Cardio'},
+  // Flexibility (samples)
+  {id:'c9', label:'15 min Yoga Stretch', type:'yoga', amount:15, xp:50, category: 'Flexibility'},
+  {id:'c10', label:'Hold Plank 2 min', type:'plank', amount:2, xp:70, category: 'Flexibility'},
+  // Fighting Skills (new category)
+  {id:'c11', label:'3× Sparring Rounds', type:'sparring', amount:3, xp:140, category: 'Fighting Skills'},
+  {id:'c12', label:'10 min Heavy Bag', type:'bag', amount:10, xp:90, category: 'Fighting Skills'},
+  {id:'c13', label:'Technique Drills 30 min', type:'drills', amount:30, xp:110, category: 'Fighting Skills'}
 ];
+
+// UI state: currently selected challenges tab
+let challengesTab = 'Strength';
+
+// Skill / Magic pool
+const SKILL_POOL = [
+  { id: 's_fireball', name: 'Fireball', type: 'magic', desc: 'Deal moderate fire damage to an enemy.', rarity: 'common', icon: '🔥' },
+  { id: 's_heal', name: 'Minor Heal', type: 'magic', desc: 'Restore a small amount of HP.', rarity: 'common', icon: '✨' },
+  { id: 's_barrier', name: 'Stone Barrier', type: 'skill', desc: 'Temporarily reduce incoming damage.', rarity: 'rare', icon: '🪨' },
+  { id: 's_berserk', name: 'Berserk', type: 'skill', desc: 'Increase STR for a few turns.', rarity: 'rare', icon: '💥' },
+  { id: 's_megaheal', name: 'Greater Heal', type: 'magic', desc: 'Restore significant HP.', rarity: 'epic', icon: '💫' },
+  { id: 's_lightning', name: 'Chain Lightning', type: 'magic', desc: 'Strike multiple enemies with lightning.', rarity: 'epic', icon: '⚡' }
+];
+
+// chance to learn on task vs challenge (challenge is higher)
+function rollLearnSkill(context){
+  try{
+    const chance = (context === 'challenge') ? 0.30 : 0.08; // challenge 30%, task 8%
+    if(Math.random() > chance) return null;
+    // pick by weighted rarity: epic rarer
+    const roll = Math.random();
+    let pool = SKILL_POOL.filter(s=>true);
+    if(roll < 0.05) pool = pool.filter(s=>s.rarity === 'epic');
+    else if(roll < 0.25) pool = pool.filter(s=>s.rarity !== 'common');
+    // fallback to whole pool if filter empties
+    if(!pool || pool.length === 0) pool = SKILL_POOL;
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    if(!pick) return null;
+    // don't add duplicates
+    state.skills = state.skills || [];
+    if(state.skills.find(s=>s.id === pick.id)) return null;
+    learnSkill(pick);
+    return pick;
+  }catch(e){ console.warn('rollLearnSkill failed', e); return null; }
+}
+
+function learnSkill(skill){
+  if(!skill || !skill.id) return;
+  state.skills = state.skills || [];
+  state.skills.push(Object.assign({}, skill));
+  try{ saveState(); }catch(e){ console.warn('saveState failed after learnSkill', e); }
+  try{ showSkillPopup(skill); }catch(e){}
+  try{ renderSkillsPanel(); }catch(e){}
+}
+
+function showSkillPopup(skill){
+  try{
+    const div = document.createElement('div');
+    div.className = 'xp-popup';
+    div.textContent = `Learned: ${skill.name}`;
+    document.body.appendChild(div);
+    requestAnimationFrame(()=>div.classList.add('show'));
+    setTimeout(()=>{ try{ document.body.removeChild(div); }catch(e){} }, 1800);
+  }catch(e){console.warn('showSkillPopup failed', e)}
+}
 
 // Generate a list of quests/enemies programmatically so we can scale up to N entries
 function generateQuests(count){
@@ -348,13 +471,79 @@ function generateQuests(count){
     const level = Math.max(1, Math.round(1 + i * 0.25 + (i % 3)));
     const reward = Math.max(5, Math.round(level * 10 + (i % 7)));
     const stamina = Math.max(3, Math.round(level * 1.2));
-    out.push({ id, name, level, reward, stamina });
+    out.push({ id, name, level, reward, stamina, type: t.tag || t.baseName.toLowerCase() });
   }
   return out;
 }
 
 // Default QUESTS: generate 100 enemies (can be adjusted)
 const QUESTS = generateQuests(100);
+
+// Generate dungeons: each dungeon contains multiple monsters
+function generateDungeons(count, perDungeon){
+  const names = ['Forsaken Ruins','Shadow Keep','Mossy Cavern','Blight Hollow','Crimson Vault','Frostfell Lair','Sundered Mines','Obsidian Deep','Sunken Temple','Iron Bastion','Gloomfen','Thunder Reach','Ember Maw','Silent Halls','Whispering Tunnels','Grim Passage','Twisted Grove','Ancient Sepulcher','Stormwatch','Verdant Hollow'];
+  const templates = ['Wolf','Bandit','Orc','Goblin','Skeleton','Bear','Golem','Mage','Assassin','Slime','Spider','Wraith','Elemental','Cultist','Berserker','Drake','Troll','Ghoul','Imp','Knight'];
+  const out = [];
+  for(let i=0;i<count;i++){
+    const id = 'd' + (i+1);
+    const name = names[i % names.length] || ('Dungeon ' + (i+1));
+    const difficulty = Math.max(1, 1 + Math.floor(i * 0.6)); // difficulty increases across dungeons
+    const monsters = [];
+    for(let m=0;m<perDungeon;m++){
+      const mid = id + '-m' + (m+1);
+      const t = templates[(i + m) % templates.length];
+      const type = String(t).toLowerCase();
+      const level = Math.max(1, Math.round(difficulty + (m % 5) - 1 + Math.floor(Math.random()*3)));
+      const reward = Math.max(5, Math.round(level * 8 + (m % 7)));
+      monsters.push({ id: mid, name: `${t} ${m+1}`, level, reward, stamina: Math.max(10, Math.round(level * 1.2)), type });
+    }
+    out.push({ id, name, difficulty, monsters });
+  }
+  return out;
+}
+
+// create 20 dungeons with 20 monsters each, and append high-level endgame dungeons up to level 999
+const baseDungeons = generateDungeons(20, 20);
+
+// generate endgame dungeons that scale monster levels up to `maxLevel`
+function generateEndgameDungeons(count, perDungeon, maxLevel){
+  const names = ['Abyssal Depths','Eternal Spire','Void Citadel','Celestial Rift','Oblivion Gate','Titanforge','Nexus of Sorrow','Shattered Throne','Eclipse Bastion','Crown of Ash'];
+  const out = [];
+  const minStart = 100; // starting monster level for endgame series
+  for(let i=0;i<count;i++){
+    const id = 'eg' + (i+1);
+    const name = names[i % names.length] + (i>0? ' ' + (i+1): '');
+    // linearly scale base level from minStart to maxLevel across count
+    const baseLevel = Math.round(minStart + ((i)/(Math.max(1,count-1))) * (maxLevel - minStart));
+    const monsters = [];
+    for(let m=0;m<perDungeon;m++){
+      const mid = id + '-m' + (m+1);
+      // add small per-monster variance but cap at maxLevel
+      let level = Math.min(maxLevel, Math.max(1, baseLevel + Math.floor((m - perDungeon/2) + (Math.random()*8 - 4)) ));
+      // ensure monotonic increase somewhat by adding dungeon difficulty influence
+      const reward = Math.max(50, Math.round(level * 12));
+      const type = 'abyssal';
+      monsters.push({ id: mid, name: `Abyssal ${m+1}`, level, reward, stamina: Math.max(20, Math.round(level * 1.2)), type });
+    }
+    out.push({ id, name, difficulty: baseLevel, monsters });
+  }
+  return out;
+}
+
+const endgame = generateEndgameDungeons(10, 20, 999);
+const DUNGEONS = baseDungeons.concat(endgame);
+
+// Pagination constants for dungeons (reuse QUESTS_PER_PAGE behavior)
+const DUNGEONS_PER_PAGE = 5;
+let dungeonsPage = 0;
+
+function getDungeonsTotalPages(){ return Math.max(1, Math.ceil((DUNGEONS && DUNGEONS.length) ? DUNGEONS.length / DUNGEONS_PER_PAGE : 1)); }
+
+function changeDungeonsPage(delta){
+  const total = getDungeonsTotalPages();
+  dungeonsPage = Math.max(0, Math.min(total - 1, dungeonsPage + delta));
+  renderQuests();
+}
 
 // Pagination for quest list
 const QUESTS_PER_PAGE = 5;
@@ -365,19 +554,27 @@ function getQuestsTotalPages(){
 }
 
 function changeQuestsPage(delta){
-  const total = getQuestsTotalPages();
-  questsPage = Math.max(0, Math.min(total - 1, questsPage + delta));
-  renderQuests();
-  // scroll quests area into view for convenience
-  const wrap = document.getElementById('quests-list'); if(wrap) wrap.scrollIntoView({behavior:'smooth', block:'start'});
+  // Previously used for QUESTS; now change dungeon page instead
+  changeDungeonsPage(delta);
 }
 
 // Returns a portrait/icon for a quest so the same symbol is used across screens
 function getPortraitForQuest(q){
   if(!q) return '👾';
-  if(q.id === 'q1' || /wolf/i.test(q.name)) return '🐺';
-  if(q.id === 'q2' || /bandit|scout/i.test(q.name)) return '🪓';
-  if(q.id === 'q3' || /orc/i.test(q.name)) return '👹';
+  // prefer explicit type field
+  const t = (q.type || q.tag || q.name || '').toString().toLowerCase();
+  if(/wolf/.test(t)) return '🐺';
+  if(/bandit|scout/.test(t)) return '🪓';
+  if(/orc/.test(t)) return '👹';
+  if(/goblin/.test(t)) return '👺';
+  if(/skeleton|ghoul/.test(t)) return '💀';
+  if(/bear/.test(t)) return '🐻';
+  if(/golem|stone|iron/.test(t)) return '🪨';
+  if(/mage|dark|elemental/.test(t)) return '🪄';
+  if(/assassin|rogue/.test(t)) return '🗡️';
+  if(/slime|slime/.test(t)) return '🟢';
+  if(/drake|dragon|wyrm/.test(t)) return '🐉';
+  if(/imp|wraith/.test(t)) return '👻';
   return '👾';
 }
 function showScreen(id){
@@ -413,8 +610,13 @@ function showGuide(screenId){
   if(!container) return;
   // place guide inside the first .status-card in the screen for visual context
   const target = container.querySelector('.status-card') || container;
+  // avoid creating duplicate guides for the same screen
+  try{
+    if(target.querySelector && target.querySelector('.user-guide')) return;
+  }catch(e){}
   const box = document.createElement('div');
   box.className = 'user-guide';
+  box.setAttribute('data-screen', screenId);
   const title = document.createElement('div');
   title.className = 'user-guide-title';
   title.textContent = 'Guide';
@@ -444,78 +646,96 @@ function showGuide(screenId){
 
 function renderChallenges(){
   const wrap = document.getElementById('challenges-list');
-  wrap.innerHTML = '';
-  CHALLENGES.forEach(ch =>{
-    const done = !!state.challenges[ch.id];
-    const div = document.createElement('div');
-    div.className = 'challenge';
-    // create a modern task-like button for challenges
-    const btn = document.createElement('button');
-    btn.className = 'task-btn';
-    btn.type = 'button';
-    btn.dataset.id = ch.id;
-    btn.dataset.xp = ch.xp;
-    btn.innerHTML = `<span class="task-main">${ch.label} — ${ch.amount}</span><span class="task-check">✓</span>`;
-    if(done) btn.classList.add('completed');
-    btn.disabled = !!done;
-    btn.addEventListener('click', ()=>{
-      // mark completed and grant XP
-      state.challenges[ch.id] = true;
-      showXPPopup(ch.xp);
-      grantXP(ch.xp);
-      saveState();
-      renderChallenges();
+  if(!wrap) return;
+  try{
+    // Tabbed challenges view
+    wrap.innerHTML = '';
+    const tabs = document.createElement('div'); tabs.className = 'challenge-tabs';
+    const cats = ['Strength','Fighting Skills','Cardio','Flexibility'];
+    // mapping for icons and classes per category
+    const catMeta = {
+      'Strength': { icon: '🏋️', cls: 'tab-strength' },
+      'Fighting Skills': { icon: '🥊', cls: 'tab-fighting' },
+      'Cardio': { icon: '🏃', cls: 'tab-cardio' },
+      'Flexibility': { icon: '🧘', cls: 'tab-flexibility' }
+    };
+    cats.forEach(cat=>{
+      const tb = document.createElement('button'); tb.type='button'; tb.className = 'tab-button';
+      const meta = catMeta[cat] || {};
+      if(meta.cls) tb.classList.add(meta.cls);
+      const iconHtml = meta.icon ? `<span class="tab-icon">${meta.icon}</span>` : '';
+      tb.innerHTML = `${iconHtml}<span class="tab-label">${cat}</span>`;
+      if(challengesTab === cat) tb.classList.add('active');
+      tb.addEventListener('click', ()=>{ challengesTab = cat; renderChallenges(); });
+      tabs.appendChild(tb);
     });
-    div.appendChild(btn);
-    wrap.appendChild(div);
-  });
+    wrap.appendChild(tabs);
+    // content area for selected tab
+    const content = document.createElement('div'); content.className = 'challenge-tab-content';
+    const list = CHALLENGES.filter(c=> (c.category || 'Uncategorized') === challengesTab);
+    if(list.length === 0){ const p = document.createElement('div'); p.className = 'req-item'; p.textContent = 'No challenges in this category.'; content.appendChild(p); }
+    list.forEach(ch=>{
+      const done = !!(state.challenges && state.challenges[ch.id]);
+      const div = document.createElement('div'); div.className = 'challenge';
+      const btn = document.createElement('button'); btn.className = 'task-btn'; btn.type='button'; btn.dataset.id = ch.id; btn.dataset.xp = ch.xp;
+      btn.innerHTML = `<span class="task-main">${ch.label} — ${ch.amount}</span><span class="task-check">✓</span>`;
+      if(done) btn.classList.add('completed'); btn.disabled = !!done;
+      btn.addEventListener('click', ()=>{
+        state.challenges = state.challenges || {}; state.challenges[ch.id] = true;
+        try{ showXPPopup(ch.xp); }catch(e){}
+        try{ grantXP(ch.xp); }catch(e){}
+        try{ saveState(); }catch(e){}
+        try{ rollLearnSkill('challenge'); }catch(e){}
+        try{ renderChallenges(); }catch(e){}
+      });
+      div.appendChild(btn); content.appendChild(div);
+    });
+    wrap.appendChild(content);
+  }catch(e){
+    console.warn('renderChallenges failed', e);
+    try{
+      // fallback grouped static HTML
+      const cats = ['Strength','Fighting Skills','Cardio','Flexibility'];
+      wrap.innerHTML = cats.map(cat=>{
+        const items = CHALLENGES.filter(c=> (c.category||'Uncategorized') === cat);
+        const html = items.map(ch=>`<div class="challenge"><button class="task-btn" data-id="${ch.id}" data-xp="${ch.xp}"><span class="task-main">${ch.label} — ${ch.amount}</span><span class="task-check">✓</span></button></div>`).join('');
+        return `<div class="req-header">${cat}</div>${html}`;
+      }).join('');
+    }catch(e2){ console.warn('renderChallenges fallback also failed', e2); }
+  }
 }
 
 function renderQuests(){
-  const wrap = document.getElementById('quests-list');
-  if(!wrap) return;
+  const wrap = document.getElementById('quests-list'); if(!wrap) return;
   wrap.innerHTML = '';
-  const total = getQuestsTotalPages();
+  const total = getDungeonsTotalPages();
   // clamp page
-  if(questsPage < 0) questsPage = 0;
-  if(questsPage > total - 1) questsPage = total - 1;
-  const start = questsPage * QUESTS_PER_PAGE;
-  const end = Math.min(QUESTS.length, start + QUESTS_PER_PAGE);
-  const slice = QUESTS.slice(start, end);
-  slice.forEach(q=>{
-    // derive some enemy stats for display only (based on level)
-    const enemyHPMax = Math.max(24, q.level * 30);
-    const enemyHP = enemyHPMax; // current = max (full)
-    const enemyMPMax = Math.max(8, Math.floor(q.level * 3));
-    const enemyMP = enemyMPMax; // current = max (full)
-    const enemyStamMax = 100;
-    const enemyStam = enemyStamMax; // show full stamina for enemy
-    const enemySTR = Math.max(1, Math.floor(q.level * 1.2));
-    const enemyVIT = Math.max(1, Math.floor(q.level * 1.0));
-
-    const div = document.createElement('div');
-    div.className = 'opponent';
+  if(dungeonsPage < 0) dungeonsPage = 0;
+  if(dungeonsPage > total - 1) dungeonsPage = total - 1;
+  const start = dungeonsPage * DUNGEONS_PER_PAGE;
+  const end = Math.min(DUNGEONS.length, start + DUNGEONS_PER_PAGE);
+  const slice = DUNGEONS.slice(start, end);
+  slice.forEach(d=>{
+    const div = document.createElement('div'); div.className = 'dungeon-card';
     div.innerHTML = `
-      <div class="opponent-card">
-        <div class="opp-left"><div class="opp-portrait" aria-hidden="true">${getPortraitForQuest(q)}</div></div>
-        <div class="opp-body">
-          <div class="opp-header"><div class="opp-name">${q.name}</div><div class="opp-meta">Lv. ${q.level}</div></div>
-          <div class="opp-bars">
-            <div class="bar-row small"><div class="bar-label">HP</div><div class="bar-wrap small"><div class="bar-bg"><div class="bar-fill hp" style="width:100%"></div></div><div class="bar-text">${enemyHP} / ${enemyHPMax}</div></div></div>
-            <div class="bar-row small"><div class="bar-label">MP</div><div class="bar-wrap small"><div class="bar-bg"><div class="bar-fill mp" style="width:100%"></div></div><div class="bar-text">${enemyMP} / ${enemyMPMax}</div></div></div>
-            <div class="bar-row small"><div class="bar-label">STA</div><div class="bar-wrap small"><div class="bar-bg"><div class="bar-fill stam" style="width:100%"></div></div><div class="bar-text">${enemyStam} / ${enemyStamMax}</div></div></div>
-          </div>
-          <div class="opp-stats">
-            <div class="stat-badge"><strong>STR</strong>: ${enemySTR}</div>
-            <div class="stat-badge"><strong>VIT</strong>: ${enemyVIT}</div>
-            <div class="stat-badge"><strong>SPD</strong>: ${Math.max(1, Math.floor(q.level/2))}</div>
-          </div>
-        </div>
-        <div class="opp-actions"><button data-id="${q.id}" class="fight-btn">Fight</button></div>
+      <div class="dungeon-left">
+        <div class="dungeon-title">${d.name}</div>
+        <div class="dungeon-meta">Difficulty: ${d.difficulty} — Monsters: ${d.monsters.length}</div>
       </div>
+      <div class="dungeon-actions"><button class="enter-dungeon" data-id="${d.id}">Enter</button></div>
     `;
-    const btn = div.querySelector('button.fight-btn');
-    if(btn) btn.addEventListener('click', ()=>startBattle(q));
+    const btn = div.querySelector('button.enter-dungeon'); if(btn) btn.addEventListener('click', ()=>startDungeon(d));
+    // add legendary badge for very high-level dungeons (max monster level > 700)
+    try{
+      const maxLv = Math.max.apply(null, d.monsters.map(m=>m.level || 0));
+      if(maxLv > 700){
+        const left = div.querySelector('.dungeon-left');
+        if(left){
+          const badge = document.createElement('span'); badge.className = 'dungeon-badge legendary'; badge.textContent = 'LEGENDARY';
+          left.appendChild(badge);
+        }
+      }
+    }catch(e){/* ignore */}
     wrap.appendChild(div);
   });
   // update pager display
@@ -523,14 +743,15 @@ function renderQuests(){
     const pageEl = document.getElementById('quests-page');
     const prev = document.getElementById('quests-prev');
     const next = document.getElementById('quests-next');
-    if(pageEl) pageEl.textContent = `${questsPage + 1} / ${total}`;
-    if(prev) prev.disabled = (questsPage <= 0);
-    if(next) next.disabled = (questsPage >= total - 1);
+    if(pageEl) pageEl.textContent = `${dungeonsPage + 1} / ${total}`;
+    if(prev) prev.disabled = (dungeonsPage <= 0);
+    if(next) next.disabled = (dungeonsPage >= total - 1);
   }catch(e){/* ignore */}
 }
 
 // --- Turn-based battle system (multi-turn UI) ---
 let battleState = null; // holds current battle session
+let currentDungeon = null;
 
 function startBattle(quest){
   // initialize battle state with copies (enemy current = max)
@@ -606,9 +827,42 @@ function renderBattle(){
   const el = document.getElementById('battle-area-log'); if(el) el.textContent = battleState.log.join('\n');
 }
 
+function startDungeon(dungeon){
+  if(!dungeon) return;
+  currentDungeon = dungeon;
+  renderDungeon();
+  showScreen('screen-dungeon');
+}
+
+function renderDungeon(){
+  if(!currentDungeon) return;
+  const info = document.getElementById('dungeon-info');
+  const wrap = document.getElementById('dungeon-monsters');
+  if(info) info.textContent = `${currentDungeon.name} — Difficulty ${currentDungeon.difficulty}`;
+  if(!wrap) return;
+  wrap.innerHTML = '';
+  currentDungeon.monsters.forEach(mon=>{
+    const row = document.createElement('div'); row.className = 'opponent-card';
+    row.style.display = 'flex'; row.style.justifyContent = 'space-between'; row.style.alignItems = 'center';
+    const left = document.createElement('div');
+    const icon = getPortraitForQuest(mon);
+    left.innerHTML = `<div style="display:flex;align-items:center;gap:10px"><div style=\"font-size:28px\">${icon}</div><div><div style=\"font-weight:800;color:#ffd86b\">${mon.name}</div><div style=\"font-size:12px;color:#a8e6ff\">Lv. ${mon.level} — Reward ${mon.reward}</div></div></div>`;
+    const btnWrap = document.createElement('div'); const fbtn = document.createElement('button'); fbtn.className='fight-btn'; fbtn.textContent='Fight';
+    fbtn.addEventListener('click', ()=>{ startBattle({ id: mon.id, name: mon.name, level: mon.level, reward: mon.reward, stamina: mon.stamina }); });
+    btnWrap.appendChild(fbtn);
+    row.appendChild(left); row.appendChild(btnWrap);
+    wrap.appendChild(row);
+  });
+}
+
 async function playerAttack(){
   if(!battleState) return;
-  const base = Math.max(1, Math.round((state.stats.str || 0) * 1.1 + state.level * 1.5));
+  // include temporary battle buffs (e.g., Berserk)
+  let buffStr = 0;
+  if(battleState.playerBuffs && Array.isArray(battleState.playerBuffs)){
+    battleState.playerBuffs.forEach(b=>{ if(b && b.key === 'str') buffStr += Number(b.val || 0); });
+  }
+  const base = Math.max(1, Math.round(((getEffectiveStat('str') || 0) + buffStr) * 1.1 + state.level * 1.5));
   // variance scales with enemy level (approx previous power/15 where power ~ level*10)
   const variance = Math.floor(Math.random() * Math.max(1, Math.floor((battleState.enemy.level || 1) * 0.7)));
   let dmg = base + variance - Math.floor(battleState.enemy.vit * 0.5);
@@ -640,12 +894,14 @@ async function enemyTurn(){
   if(!battleState) return;
   // enemy attacks
   // base damage roughly maps to (level*10 - str*0.8)/6 from previous model
-  const base = Math.max(1, Math.ceil(((battleState.enemy.level || 1) * 10 - Math.floor((state.stats.str||0) * 0.8)) / 6));
+  const base = Math.max(1, Math.ceil(((battleState.enemy.level || 1) * 10 - Math.floor((getEffectiveStat('str')||0) * 0.8)) / 6));
   const variance = Math.floor(Math.random() * Math.max(1, Math.floor(((battleState.enemy.level || 1) * 10) / 12)));
   let dmg = base + variance;
   if(battleState.playerDefending) dmg = Math.max(0, Math.floor(dmg * 0.5));
+  // temporary barrier reduces damage
+  if(battleState.playerBarrier && battleState.playerBarrier > 0){ dmg = Math.max(0, Math.floor(dmg * 0.5)); battleState.playerBarrier = Math.max(0, battleState.playerBarrier - 1); appendBattleLog('Your barrier absorbed some damage.'); }
   // mitigate by player's vit
-  dmg = Math.max(0, dmg - Math.floor((state.stats.vit || 0) / 6));
+  dmg = Math.max(0, dmg - Math.floor((getEffectiveStat('vit') || 0) / 6));
   battleState.player.hp.cur = Math.max(0, battleState.player.hp.cur - dmg);
   appendBattleLog(`${battleState.enemy.name} hits you for ${dmg} damage.`);
   // enemy may drain some player stamina
@@ -656,6 +912,15 @@ async function enemyTurn(){
   renderBattle();
   if(battleState.player.hp.cur <= 0){
     await endBattle(false);
+  }
+  // tick down temporary player buffs
+  if(battleState.playerBuffs && Array.isArray(battleState.playerBuffs)){
+    for(let i = battleState.playerBuffs.length - 1; i >= 0; i--){
+      const b = battleState.playerBuffs[i];
+      if(!b) continue;
+      b.turns = (b.turns || 0) - 1;
+      if(b.turns <= 0){ battleState.playerBuffs.splice(i,1); appendBattleLog(`Your ${b.key.toUpperCase()} buff has expired.`); }
+    }
   }
 }
 
@@ -698,7 +963,8 @@ function fightOpponent(opponent){
   const log = document.getElementById('battle-log');
   log.textContent = '';
   // simple power model: playerPower = level*10 + sum(stats)
-  const statsSum = (state.stats.str||0) + (state.stats.agi||0) + (state.stats.per||0) + (state.stats.vit||0) + (state.stats.int||0);
+  const eff = getEffectiveStats();
+  const statsSum = (eff.str||0) + (eff.agi||0) + (eff.per||0) + (eff.vit||0) + (eff.int||0);
   const playerPower = (state.level || 1) * 10 + statsSum;
   const opponentPower = (typeof opponent.power === 'number') ? opponent.power : ((typeof opponent.level === 'number') ? opponent.level * 10 : 10);
   log.textContent += `You engage ${opponent.name} (Lv. ${opponent.level || '?'} — power ${opponentPower})\n`;
@@ -707,7 +973,7 @@ function fightOpponent(opponent){
   log.textContent += `Your effective power: ${effective} (base ${playerPower}, roll ${roll})\n`;
   // Player stamina is a positive resource; higher stamina provides a small bonus to VIT
   const playerStamina = (state.stamina && typeof state.stamina.cur === 'number') ? state.stamina.cur : 0;
-  const effectiveVIT = Math.max(0, (state.stats.vit || 0) + Math.floor(playerStamina / 5));
+  const effectiveVIT = Math.max(0, (eff.vit || 0) + Math.floor(playerStamina / 5));
   // Base enemy attack count scales with opponent power
   const enemyAttacksBase = Math.max(1, Math.floor(opponentPower / 25));
   // Enemy's ability to attack is reduced by its own fatigue and player's effective VIT
@@ -816,11 +1082,31 @@ function render(){
   document.getElementById('xp-fill').style.width = xpPct + '%';
   document.getElementById('xp-text').textContent = `${state.xp.cur} / ${xpToNextSafe}`;
 
-  // Requirements (tiered scaling by 5-level chunks)
-  document.getElementById('daily-req').textContent = tieredRequirement(state.taskBase.dailyJumpingJacks, state.level);
-  document.getElementById('weekly-push').textContent = tieredRequirement(state.taskBase.weeklyPushups, state.level);
-  document.getElementById('weekly-squat').textContent = tieredRequirement(state.taskBase.weeklySquats, state.level);
-  document.getElementById('weekly-sit').textContent = tieredRequirement(state.taskBase.weeklySitups, state.level);
+  // Requirements (daily task may change based on level ranges)
+  try{
+    const daily = computeDailyTaskForLevel(state.level);
+    const dailyReqEl = document.getElementById('daily-req');
+    const dailyActEl = document.getElementById('daily-activity');
+    if(dailyReqEl) dailyReqEl.textContent = daily.amount;
+    if(dailyActEl) dailyActEl.textContent = daily.activity;
+  }catch(e){
+    // fallback to previous tiered behavior
+    try{ document.getElementById('daily-req').textContent = tieredRequirement(state.taskBase.dailyJumpingJacks, state.level); }catch(e2){}
+  }
+  try{
+    const bonus = computeWeeklyBonus(state.level);
+    const wp = (state.taskBase && typeof state.taskBase.weeklyPushups === 'number') ? state.taskBase.weeklyPushups + bonus : 0 + bonus;
+    const wsq = (state.taskBase && typeof state.taskBase.weeklySquats === 'number') ? state.taskBase.weeklySquats + bonus : 0 + bonus;
+    const wsi = (state.taskBase && typeof state.taskBase.weeklySitups === 'number') ? state.taskBase.weeklySitups + bonus : 0 + bonus;
+    document.getElementById('weekly-push').textContent = tieredRequirement(wp, state.level);
+    document.getElementById('weekly-squat').textContent = tieredRequirement(wsq, state.level);
+    document.getElementById('weekly-sit').textContent = tieredRequirement(wsi, state.level);
+  }catch(e){
+    // fallback
+    try{ document.getElementById('weekly-push').textContent = tieredRequirement(state.taskBase.weeklyPushups, state.level); }catch(e2){}
+    try{ document.getElementById('weekly-squat').textContent = tieredRequirement(state.taskBase.weeklySquats, state.level); }catch(e2){}
+    try{ document.getElementById('weekly-sit').textContent = tieredRequirement(state.taskBase.weeklySitups, state.level); }catch(e2){}
+  }
   // Task buttons reflect saved state (add/remove completed class)
   const btnDaily = document.getElementById('daily-complete');
   if(btnDaily){
@@ -846,6 +1132,86 @@ function render(){
     btnWsi.classList.toggle('completed', done);
     btnWsi.setAttribute('aria-pressed', done ? 'true' : 'false');
   }
+
+  // Render equipment panel
+  try{ renderEquipmentPanel(); }catch(e){ console.warn('renderEquipmentPanel failed', e); }
+  try{ renderSkillsPanel(); }catch(e){ console.warn('renderSkillsPanel failed', e); }
+}
+
+function renderSkillsPanel(){
+  const grid = document.getElementById('skills-grid');
+  if(!grid) return;
+  grid.innerHTML = '';
+  state.skills = state.skills || [];
+  if(state.skills.length === 0){
+    const p = document.createElement('div'); p.className = 'skill-item'; p.textContent = 'No skills learned yet.'; grid.appendChild(p); return;
+  }
+  // Render as tiles with icon, name and optional rarity class
+  state.skills.forEach(s=>{
+    const tile = document.createElement('div'); tile.className = 'skill-tile';
+    if(s.rarity) tile.classList.add('rarity-' + s.rarity);
+    const icon = document.createElement('div'); icon.className = 'skill-icon'; icon.textContent = s.icon || '★';
+    const name = document.createElement('div'); name.className = 'skill-name'; name.textContent = s.name;
+    const desc = document.createElement('div'); desc.className = 'skill-desc'; desc.textContent = s.desc || '';
+    tile.appendChild(icon);
+    const info = document.createElement('div'); info.className = 'skill-info'; info.appendChild(name); info.appendChild(desc);
+    tile.appendChild(info);
+    // clicking a tile opens the skill modal for quick use/view
+    tile.addEventListener('click', ()=>{ try{ showSkillModal({ inBattle: false }); }catch(e){ console.warn('open skill modal failed', e); } });
+    grid.appendChild(tile);
+  });
+}
+
+// Render the equipment panel UI in the Stats screen
+function renderEquipmentPanel(){
+  const grid = document.getElementById('eq-grid');
+  if(!grid) return;
+  grid.innerHTML = '';
+  state.equipment = state.equipment || {};
+  const slots = ['head','chest','legs','weapon','shield'];
+  slots.forEach(slot=>{
+    const wrapper = document.createElement('div'); wrapper.className = 'eq-slot';
+    const slotName = document.createElement('div'); slotName.className = 'slot-name'; slotName.textContent = slot.toUpperCase();
+    wrapper.appendChild(slotName);
+    const item = state.equipment[slot];
+    if(item){
+      // show icon + name with rarity coloring
+      const top = document.createElement('div'); top.className = 'slot-top';
+      const left = document.createElement('div'); left.className = 'slot-left';
+      const icon = document.createElement('div'); icon.className = 'eq-icon ' + (item.rarity ? ('rarity-' + item.rarity) : 'rarity-common');
+      icon.textContent = item.type === 'armor' ? '🛡' : (item.type === 'consumable' ? '⚗' : (item.type === 'weapon' ? '⚔' : '◆'));
+      const itemName = document.createElement('div'); itemName.className = 'slot-item'; itemName.textContent = item.name || 'Item';
+      left.appendChild(icon); left.appendChild(itemName);
+      top.appendChild(left);
+      wrapper.appendChild(top);
+      if(item.bonus){
+        const bwrap = document.createElement('div'); bwrap.className = 'slot-bonus';
+        const parts = [];
+        Object.keys(item.bonus).forEach(k=>{ parts.push(`${k.toUpperCase()} +${item.bonus[k]}`); });
+        bwrap.textContent = parts.join('  ');
+        wrapper.appendChild(bwrap);
+      }
+      const actions = document.createElement('div'); actions.className = 'slot-actions';
+      const uneq = document.createElement('button'); uneq.type='button'; uneq.textContent = 'Unequip'; uneq.addEventListener('click', ()=>{ unequipSlot(slot); });
+      actions.appendChild(uneq);
+      wrapper.appendChild(actions);
+    } else {
+      const empty = document.createElement('div'); empty.className = 'slot-item'; empty.textContent = 'Empty'; empty.style.color = '#9fbccc';
+      wrapper.appendChild(empty);
+    }
+    grid.appendChild(wrapper);
+  });
+}
+
+function unequipSlot(slot){
+  state.equipment = state.equipment || {};
+  const it = state.equipment[slot];
+  if(!it) return;
+  // move item back to inventory
+  try{ addItemToInventory(Object.assign({}, it, { qty: 1 })); }catch(e){ console.warn('addItemToInventory failed on unequip', e); }
+  delete state.equipment[slot];
+  try{ saveState(); }catch(e){ console.warn('saveState failed on unequip', e); }
+  render();
 }
 
 function changeLevel(delta){
@@ -901,6 +1267,8 @@ function grantXP(amount){
     // capture old stats, apply growth, compute deltas and show popup
     const oldStats = Object.assign({}, state.stats);
     applyStatsForLevel(state.level);
+    // update title/category based on new level
+    try{ state.title = computeTitleForLevel(state.level); }catch(e){console.warn('computeTitleForLevel failed', e)}
     const deltas = {};
     ['str','agi','per','vit','int'].forEach(k=>{ deltas[k] = (state.stats[k] || 0) - (oldStats[k] || 0); });
     try{ showStatPopup(deltas); }catch(e){}
@@ -939,6 +1307,248 @@ function showAbilityPopup(amount){
     requestAnimationFrame(()=>{ div.classList.add('show'); });
     setTimeout(()=>{ try{ document.body.removeChild(div); }catch(e){} }, 1400);
   }catch(e){console.warn('Ability popup failed', e)}
+}
+
+// Add item to inventory (merge by name/type) and persist
+function addItemToInventory(item){
+  if(!item || !item.name) return;
+  state.inventory = state.inventory || [];
+  // try to find same item by id or name
+  const found = state.inventory.find(i=>i.name === item.name && i.rarity === item.rarity && i.type === item.type);
+  if(found){ found.qty = (found.qty || 1) + (item.qty || 1); }
+  else { state.inventory.push(Object.assign({}, item, { qty: item.qty || 1 })); }
+  try{ saveState(); }catch(e){ console.warn('saveState failed after adding item', e); }
+  try{ showItemPopup(item); }catch(e){ console.warn('showItemPopup failed', e); }
+}
+
+function showItemPopup(item){
+  try{
+    const div = document.createElement('div');
+    div.className = 'xp-popup';
+    div.textContent = `+1 ${item.name}`;
+    document.body.appendChild(div);
+    requestAnimationFrame(()=>div.classList.add('show'));
+    setTimeout(()=>{ try{ document.body.removeChild(div); }catch(e){} }, 1400);
+  }catch(e){console.warn('item popup failed', e)}
+}
+
+// Loot generation: returns an item or null
+function generateLoot(source){
+  const roll = Math.random();
+  // Example probabilities: common potion 40%, stamina potion 25%, armor 10%, nothing otherwise
+  if(roll < 0.40) return { name: 'Minor Health Potion', type: 'consumable', rarity: 'common', effect: { hp: 40 }, qty: 1 };
+  if(roll < 0.65) return { name: 'Stamina Potion', type: 'consumable', rarity: 'common', effect: { stam: 40 }, qty: 1 };
+  if(roll < 0.75) return { name: 'Greater Health Potion', type: 'consumable', rarity: 'rare', effect: { hp: 120 }, qty: 1 };
+  if(roll < 0.85) return { name: 'Leather Armor (Chest)', type: 'armor', rarity: 'common', slot: 'chest', bonus: { vit: 2 } };
+  if(roll < 0.92) return { name: 'Iron Greaves (Legs)', type: 'armor', rarity: 'rare', slot: 'legs', bonus: { vit: 4 } };
+  if(roll < 0.97) return { name: 'Dragonplate Helm', type: 'armor', rarity: 'epic', slot: 'head', bonus: { vit: 8 } };
+  return null; // nothing
+}
+
+// Roll for loot after task/challenge completion
+function rollLoot(context){
+  try{
+    // increase drop chance for challenges
+    const base = (context === 'challenge') ? 0.6 : 0.35;
+    if(Math.random() > base) return null;
+    const item = generateLoot(context);
+    if(item){ addItemToInventory(item); }
+    return item;
+  }catch(e){ console.warn('rollLoot error', e); return null; }
+}
+
+// Show inventory modal. Options: { inBattle: bool, onlyConsumables: bool }
+function showInventoryModal(opts){
+  opts = opts || {};
+  const inBattle = !!opts.inBattle;
+  const onlyConsumables = !!opts.onlyConsumables;
+  // build modal
+  const overlay = document.createElement('div'); overlay.className = 'inv-overlay';
+  const box = document.createElement('div'); box.className = 'inv-modal';
+  const title = document.createElement('h3'); title.textContent = inBattle ? 'Use Item (Battle)' : 'Inventory';
+  box.appendChild(title);
+
+  // controls: sorter + list
+  const controls = document.createElement('div'); controls.className = 'inv-controls';
+  const sortLabel = document.createElement('label'); sortLabel.textContent = 'Sort: ';
+  const sortSel = document.createElement('select'); sortSel.className = 'inv-sort';
+  ['name','rarity'].forEach(v=>{ const o = document.createElement('option'); o.value = v; o.textContent = v.charAt(0).toUpperCase() + v.slice(1); sortSel.appendChild(o); });
+  controls.appendChild(sortLabel); controls.appendChild(sortSel);
+  box.appendChild(controls);
+
+  const list = document.createElement('div'); list.className = 'inv-list';
+  state.inventory = state.inventory || [];
+  if(state.inventory.length === 0){
+    const p = document.createElement('div'); p.className = 'inv-empty'; p.textContent = 'No items yet.'; list.appendChild(p);
+  } else {
+    // create a view copy for sorting and stable indices
+    const items = state.inventory.map((it,i)=> Object.assign({}, it, { _idx: i }));
+    function rarityValue(r){ return r === 'epic' ? 3 : r === 'rare' ? 2 : 1; }
+    function renderList(){
+      list.innerHTML = '';
+      const sortBy = sortSel.value;
+      if(sortBy === 'name') items.sort((a,b)=> (a.name||'').localeCompare(b.name||''));
+      else items.sort((a,b)=> rarityValue(b.rarity) - rarityValue(a.rarity));
+      items.forEach(it=>{
+        if(onlyConsumables && it.type !== 'consumable') return;
+        const idx = it._idx;
+        const row = document.createElement('div'); row.className = 'inv-item ' + (it.rarity || 'common');
+        const left = document.createElement('div'); left.className = 'inv-left';
+        const icon = document.createElement('div'); icon.className = 'inv-icon'; icon.textContent = (it.icon || (it.type === 'consumable' ? '🍷' : it.type === 'armor' ? '🛡️' : '🔧'));
+        left.appendChild(icon);
+        left.innerHTML += `<div class="inv-name">${it.name}</div><div class="inv-meta">${it.rarity || ''} ${it.type || ''}</div>`;
+        const right = document.createElement('div'); right.className = 'inv-right';
+        const qty = document.createElement('div'); qty.className = 'inv-qty'; qty.textContent = `x${it.qty||1}`;
+        right.appendChild(qty);
+        if(it.type === 'consumable'){
+          const useBtn = document.createElement('button'); useBtn.type='button'; useBtn.textContent = inBattle ? 'Use in Battle' : 'Use';
+          useBtn.addEventListener('click', ()=>{ useItemByIndex(idx, inBattle); overlay.remove(); });
+          right.appendChild(useBtn);
+        }
+        if(it.type === 'armor'){
+          const equipBtn = document.createElement('button'); equipBtn.type='button'; equipBtn.textContent = (state.equipment && state.equipment[it.slot] && state.equipment[it.slot].name === it.name) ? 'Unequip' : 'Equip';
+          equipBtn.addEventListener('click', ()=>{ toggleEquip(idx); render(); saveState(); overlay.remove(); });
+          right.appendChild(equipBtn);
+        }
+        const drop = document.createElement('button'); drop.type='button'; drop.textContent = 'Drop';
+        drop.addEventListener('click', ()=>{ if(confirm('Drop this item?')){ removeOneFromInventory(idx); render(); saveState(); overlay.remove(); } });
+        right.appendChild(drop);
+        row.appendChild(left); row.appendChild(right); list.appendChild(row);
+      });
+    }
+    sortSel.addEventListener('change', renderList);
+    renderList();
+  }
+  box.appendChild(list);
+  const footer = document.createElement('div'); footer.className = 'inv-footer';
+  const close = document.createElement('button'); close.type='button'; close.textContent = 'Close'; close.addEventListener('click', ()=>{ overlay.remove(); });
+  footer.appendChild(close);
+  box.appendChild(footer);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+
+function removeOneFromInventory(idx){
+  const it = state.inventory[idx]; if(!it) return;
+  if(it.qty && it.qty > 1) it.qty = it.qty - 1;
+  else state.inventory.splice(idx,1);
+}
+
+function useItemByIndex(idx, inBattle){
+  const it = state.inventory[idx]; if(!it) return;
+  if(it.type !== 'consumable') return;
+  // Apply effects
+  const eff = it.effect || {};
+  if(inBattle && battleState){
+    if(eff.hp){ battleState.player.hp.cur = Math.min(battleState.player.hp.max, (battleState.player.hp.cur||0) + eff.hp); appendBattleLog(`You used ${it.name} and recovered ${eff.hp} HP.`); }
+    if(eff.stam || eff.stam === 0){ battleState.player.stam.cur = Math.min(battleState.player.stam.max, (battleState.player.stam.cur||0) + (eff.stam||0)); appendBattleLog(`You used ${it.name} and recovered ${eff.stam||0} STA.`); }
+    if(eff.mp){ battleState.player.mp.cur = Math.min(battleState.player.mp.max, (battleState.player.mp.cur||0) + eff.mp); appendBattleLog(`You used ${it.name} and recovered ${eff.mp} MP.`); }
+    renderBattle();
+  } else {
+    if(eff.hp){ state.hp.cur = Math.min(state.hp.max, (state.hp.cur||0) + eff.hp); }
+    if(eff.stam || eff.stam === 0){ state.stamina.cur = Math.min(state.stamina.max, (state.stamina.cur||0) + (eff.stam||0)); }
+    if(eff.mp){ state.mp.cur = Math.min(state.mp.max, (state.mp.cur||0) + eff.mp); }
+    render();
+  }
+  // consume one
+  removeOneFromInventory(idx);
+  saveState();
+}
+
+// Show skills modal; options: { inBattle: bool }
+function showSkillModal(opts){
+  opts = opts || {};
+  const inBattle = !!opts.inBattle;
+  const overlay = document.createElement('div'); overlay.className = 'skill-overlay';
+  const box = document.createElement('div'); box.className = 'skill-modal';
+  const title = document.createElement('h3'); title.textContent = inBattle ? 'Use Skill (Battle)' : 'Skills'; box.appendChild(title);
+  const list = document.createElement('div'); list.className = 'skill-list';
+  state.skills = state.skills || [];
+  if(state.skills.length === 0){ const p = document.createElement('div'); p.className = 'skill-empty'; p.textContent = 'No skills learned yet.'; list.appendChild(p); }
+  else {
+    state.skills.forEach((sk, i)=>{
+      const row = document.createElement('div'); row.className = 'skill-item';
+      const left = document.createElement('div'); left.className = 'skill-left'; left.textContent = sk.icon || '✨';
+      const body = document.createElement('div'); body.className = 'skill-body'; body.innerHTML = `<div class="skill-name">${sk.name}</div><div class="skill-desc">${sk.desc||''}</div>`;
+      const right = document.createElement('div'); right.className = 'skill-right';
+      const mpCost = sk.mpCost || (sk.rarity === 'epic' ? 18 : sk.rarity === 'rare' ? 10 : 6);
+      const useBtn = document.createElement('button'); useBtn.type='button'; useBtn.textContent = `Use (${mpCost} MP)`;
+      useBtn.addEventListener('click', async ()=>{
+        try{
+          if(inBattle && !battleState){ alert('No battle active.'); return; }
+          // check MP
+          const availableMP = inBattle ? (battleState.player.mp.cur||0) : (state.mp.cur||0);
+          if(availableMP < mpCost){ if(inBattle) appendBattleLog('Not enough MP to use that skill.'); else alert('Not enough MP'); return; }
+          // apply skill effects (simple mapping)
+          switch(sk.id){
+            case 's_fireball':{
+              const dmg = Math.max(1, Math.round((state.level||1) * 4 + Math.random()*12));
+              if(inBattle){ battleState.enemy.hp.cur = Math.max(0, battleState.enemy.hp.cur - dmg); appendBattleLog(`You cast ${sk.name} for ${dmg} damage.`); renderBattle(); if(battleState.enemy.hp.cur<=0){ await endBattle(true); } }
+              else { state.hp.cur = Math.max(0, Math.min(state.hp.max, state.hp.cur)); }
+              break;
+            }
+            case 's_lightning':{
+              const dmg = Math.max(1, Math.round((state.level||1) * 6 + Math.random()*18));
+              if(inBattle){ battleState.enemy.hp.cur = Math.max(0, battleState.enemy.hp.cur - dmg); appendBattleLog(`You cast ${sk.name} for ${dmg} lightning damage.`); renderBattle(); if(battleState.enemy.hp.cur<=0){ await endBattle(true); } }
+              break;
+            }
+            case 's_heal':{
+              const heal = 60 + Math.round((state.level||1) * 4);
+              if(inBattle){ battleState.player.hp.cur = Math.min(battleState.player.hp.max, (battleState.player.hp.cur||0) + heal); appendBattleLog(`You cast ${sk.name} and restored ${heal} HP.`); renderBattle(); }
+              else { state.hp.cur = Math.min(state.hp.max, (state.hp.cur||0) + heal); }
+              break;
+            }
+            case 's_megaheal':{
+              const heal = 160 + Math.round((state.level||1) * 10);
+              if(inBattle){ battleState.player.hp.cur = Math.min(battleState.player.hp.max, (battleState.player.hp.cur||0) + heal); appendBattleLog(`You cast ${sk.name} and restored ${heal} HP.`); renderBattle(); }
+              else { state.hp.cur = Math.min(state.hp.max, (state.hp.cur||0) + heal); }
+              break;
+            }
+            case 's_barrier':{
+              if(inBattle){ battleState.playerBarrier = (battleState.playerBarrier || 0) + 1; appendBattleLog(`You cast ${sk.name}; damage will be reduced next turn.`); renderBattle(); }
+              break;
+            }
+            case 's_berserk':{
+              if(inBattle){ battleState.playerBuffs = battleState.playerBuffs || []; battleState.playerBuffs.push({ key: 'str', val: 5, turns: 3 }); appendBattleLog(`You cast ${sk.name}; STR increased for 3 turns.`); renderBattle(); }
+              break;
+            }
+            default:{
+              if(inBattle) appendBattleLog(`You used ${sk.name}.`);
+            }
+          }
+          // deduct MP
+          if(inBattle){ battleState.player.mp.cur = Math.max(0, battleState.player.mp.cur - mpCost); renderBattle(); }
+          else { state.mp.cur = Math.max(0, state.mp.cur - mpCost); render(); }
+          saveState();
+          overlay.remove();
+        }catch(err){ console.warn('useSkill failed', err); }
+      });
+      right.appendChild(useBtn);
+      row.appendChild(left); row.appendChild(body); row.appendChild(right); list.appendChild(row);
+    });
+  }
+  box.appendChild(list);
+  const footer = document.createElement('div'); footer.className = 'skill-footer';
+  const close = document.createElement('button'); close.type='button'; close.textContent = 'Close'; close.addEventListener('click', ()=>{ overlay.remove(); });
+  footer.appendChild(close); box.appendChild(footer);
+  overlay.appendChild(box); document.body.appendChild(overlay);
+}
+
+function toggleEquip(idx){
+  const it = state.inventory[idx]; if(!it || it.type !== 'armor') return;
+  state.equipment = state.equipment || {};
+  const slot = it.slot || 'chest';
+  // if same item already equipped, unequip -> move back to inventory
+  const equipped = state.equipment[slot];
+  if(equipped && equipped.name === it.name){
+    // unequip: move back to inventory
+    addItemToInventory(Object.assign({}, equipped, { qty: 1 }));
+    delete state.equipment[slot];
+    return;
+  }
+  // equip: place item into slot and remove one from inventory
+  state.equipment[slot] = Object.assign({}, it);
+  removeOneFromInventory(idx);
 }
 
 // Particle effects: show level-up or battle particles
@@ -1001,11 +1611,102 @@ function toggleTask(key, completed, xpReward){
     // show animated XP popup when marking completed, then grant XP
     showXPPopup(xpReward);
     grantXP(xpReward);
+    try{ rollLoot('task'); }catch(e){console.warn('rollLoot failed', e)}
+    try{ rollLearnSkill('task'); }catch(e){console.warn('rollLearnSkill failed', e)}
   }else if(!completed && state.tasks[key].completed){
     state.tasks[key].completed = false;
   }
   saveState();
   render();
+}
+
+// Compute XP for a personal workout based on minutes
+function computeWorkoutXP(minutes){
+  const mins = Math.max(0, Math.floor(Number(minutes) || 0));
+  // Simple scaling: 2 XP per minute, minimum 5 XP, cap 200 XP
+  const xp = Math.min(200, Math.max(5, Math.round(mins * 2)));
+  return xp;
+}
+
+// Log a personal workout from the Tasks screen (accepts hours + minutes)
+async function submitPersonalWorkout(){
+  try{
+    const nameEl = document.getElementById('personal-workout-name');
+    const hoursEl = document.getElementById('personal-workout-hours');
+    const minEl = document.getElementById('personal-workout-minutes');
+    const feedback = document.getElementById('personal-workout-feedback');
+    if(!minEl || !nameEl || !hoursEl || !feedback) return;
+    const hours = Math.max(0, Number(hoursEl.value || 0));
+    const minutesRaw = Math.max(0, Number(minEl.value || 0));
+    const totalMinutes = Math.max(0, Math.floor(hours * 60 + minutesRaw));
+    if(totalMinutes <= 0){ feedback.textContent = 'Please enter hours and/or minutes (total > 0).'; return; }
+    const label = (nameEl.value && nameEl.value.trim().length > 0) ? nameEl.value.trim() : `${hours}h ${minutesRaw}m workout`;
+    const xp = computeWorkoutXP(totalMinutes);
+    // record history
+    state.tasks = state.tasks || {};
+    state.tasks.personalHistory = state.tasks.personalHistory || [];
+    const rec = { id: 'p' + Date.now(), label, hours, minutes: minutesRaw, totalMinutes, xp, ts: Date.now() };
+    state.tasks.personalHistory.unshift(rec);
+    // grant rewards
+    try{ showXPPopup(xp); }catch(e){}
+    try{ grantXP(xp); }catch(e){}
+    try{ rollLearnSkill('task'); }catch(e){}
+    try{ rollLoot('task'); }catch(e){}
+    feedback.textContent = `Logged: ${label} — ${hours}h ${minutesRaw}m — +${xp} XP`;
+    // clear inputs
+    hoursEl.value = '';
+    minEl.value = '';
+    nameEl.value = '';
+    await saveState();
+    renderPersonalHistory();
+    render();
+  }catch(e){ console.warn('submitPersonalWorkout failed', e); }
+}
+
+// Render the personal workout history in the Tasks screen
+function renderPersonalHistory(){
+  try{
+    const container = document.getElementById('personal-workout-history');
+    if(!container) return;
+    const list = (state.tasks && state.tasks.personalHistory) ? state.tasks.personalHistory : [];
+    if(!list || list.length === 0){
+      container.innerHTML = '<div style="color:#97d9ef;font-size:13px">No workouts logged yet.</div>';
+      return;
+    }
+    const rows = list.map(e=>{
+      const d = new Date(e.ts);
+      const time = d.toLocaleString();
+      const label = e.label || 'Personal Workout';
+      const h = (typeof e.hours === 'number') ? e.hours : Math.floor((e.totalMinutes||0)/60);
+      const m = (typeof e.minutes === 'number') ? e.minutes : ((e.totalMinutes||0) % 60);
+      return `
+        <div class="pw-row" style="display:flex;justify-content:space-between;align-items:center;padding:6px 4px;border-bottom:1px solid rgba(255,255,255,0.03)">
+          <div style="flex:1">
+            <div style="font-size:13px;color:#dff6ff">${escapeHtml(label)}</div>
+            <div style="font-size:12px;color:#9fe8ff">${h}h ${m}m — +${e.xp} XP — ${time}</div>
+          </div>
+          <div style="margin-left:8px">
+            <button data-id="${e.id}" class="pw-delete" style="background:#ff6b6b;border:none;padding:6px 8px;border-radius:6px;color:#072022;cursor:pointer">Delete</button>
+          </div>
+        </div>
+      `;
+    }).join('\n');
+    container.innerHTML = rows;
+    // wire delete buttons
+    Array.from(container.querySelectorAll('.pw-delete')).forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const id = btn.getAttribute('data-id');
+        state.tasks.personalHistory = (state.tasks.personalHistory || []).filter(x=>String(x.id) !== String(id));
+        saveState();
+        renderPersonalHistory();
+      });
+    });
+  }catch(e){ console.warn('renderPersonalHistory failed', e); }
+}
+
+function escapeHtml(str){
+  if(!str) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 function resetDaily(){
@@ -1048,26 +1749,7 @@ function resetAll(){
 window.addEventListener('DOMContentLoaded', async ()=>{
   // load persisted state before wiring UI so render/events use loaded values
   try{ await initState(); }catch(e){ console.warn('initState failed', e); }
-  // create a small badge so we can visually confirm JS ran
-  try{
-    let badge = document.getElementById('js-badge');
-    if(!badge){
-      badge = document.createElement('div');
-      badge.id = 'js-badge';
-      badge.style.position = 'fixed';
-      badge.style.left = '12px';
-      badge.style.bottom = '14px';
-      badge.style.padding = '6px 8px';
-      badge.style.background = 'rgba(14,160,255,0.12)';
-      badge.style.color = '#bfeaff';
-      badge.style.border = '1px solid rgba(14,160,255,0.14)';
-      badge.style.borderRadius = '6px';
-      badge.style.fontSize = '12px';
-      badge.textContent = 'JS loaded';
-      badge.style.zIndex = '9999';
-      document.body.appendChild(badge);
-    }
-  }catch(e){console.warn('Badge creation failed', e)}
+  // runtime JS badge removed to keep UI clean
   document.getElementById('increase-level').addEventListener('click', ()=>changeLevel(1));
   document.getElementById('decrease-level').addEventListener('click', ()=>changeLevel(-1));
   // wire task buttons (toggle on click)
@@ -1108,6 +1790,8 @@ window.addEventListener('DOMContentLoaded', async ()=>{
   // battle back
   const backBattle = document.getElementById('back-from-battle');
   if(backBattle) backBattle.addEventListener('click', ()=>{ showScreen('screen-quests'); renderQuests(); });
+  const backDungeon = document.getElementById('back-from-dungeon');
+  if(backDungeon) backDungeon.addEventListener('click', ()=>{ showScreen('screen-quests'); renderQuests(); currentDungeon = null; });
   // tasks back
   const backTasks = document.getElementById('back-from-tasks');
   if(backTasks) backTasks.addEventListener('click', ()=>showScreen('screen-stats'));
@@ -1146,6 +1830,28 @@ window.addEventListener('DOMContentLoaded', async ()=>{
       }catch(e){console.warn('avatar read failed', e)}
     });
   }
+  // Delegate clicks inside challenges list to handle static fallback or dynamically created buttons
+  try{
+    const challengesWrap = document.getElementById('challenges-list');
+    if(challengesWrap){
+      challengesWrap.addEventListener('click', (ev)=>{
+        const btn = ev.target.closest && ev.target.closest('button.task-btn');
+        if(!btn) return;
+        const cid = btn.dataset.id || btn.getAttribute('data-id');
+        if(!cid) return;
+        // ignore if already completed
+        if(state.challenges && state.challenges[cid]) return;
+        const ch = (Array.isArray(CHALLENGES) && CHALLENGES.find(c=>c.id === cid));
+        if(!ch) return;
+        state.challenges[cid] = true;
+        showXPPopup(ch.xp);
+        grantXP(ch.xp);
+        try{ saveState(); }catch(e){ console.warn('saveState failed on challenge click', e); }
+        try{ rollLearnSkill('challenge'); }catch(e){ console.warn('rollLearnSkill failed on delegated challenge', e); }
+        try{ renderChallenges(); }catch(e){ console.warn('renderChallenges failed', e); }
+      });
+    }
+  }catch(e){ console.warn('challenge delegation failed', e); }
   // show default screen
   showScreen('screen-stats');
   // render challenges & quests so content exists even if the user navigates quickly
@@ -1163,7 +1869,111 @@ window.addEventListener('DOMContentLoaded', async ()=>{
       }
     }
   }catch(e){console.warn('set avatar preview failed', e)}
+  // wire Ability Points allocator: clicking the available value opens allocator
+  try{
+    const availEl = document.getElementById('available');
+    if(availEl){
+      availEl.style.cursor = 'pointer';
+      availEl.title = 'Click to allocate Ability Points';
+      availEl.addEventListener('click', ()=>{
+        try{ showAllocateModal(); }catch(e){console.warn('open alloc failed', e)}
+      });
+    }
+  }catch(e){console.warn('wire alloc failed', e)}
+  // wire Inventory button
+  try{
+    const invBtn = document.getElementById('open-inventory');
+    if(invBtn){ invBtn.addEventListener('click', ()=>{ showInventoryModal({ inBattle: false }); }); }
+  }catch(e){ console.warn('wire inventory failed', e); }
+  // wire Battle Use Item button
+  try{
+    const battleUse = document.getElementById('battle-use-item');
+    if(battleUse){ battleUse.addEventListener('click', ()=>{ showInventoryModal({ inBattle: true, onlyConsumables: true }); }); }
+  }catch(e){ console.warn('wire battle use failed', e); }
+  // wire Battle Use Skill button
+  try{
+    const battleSkill = document.getElementById('battle-use-skill');
+    if(battleSkill){ battleSkill.addEventListener('click', ()=>{ showSkillModal({ inBattle: true }); }); }
+  }catch(e){ console.warn('wire battle skill failed', e); }
+  // wire personal workout submit
+  try{
+    const pbtn = document.getElementById('personal-workout-submit');
+    if(pbtn){ pbtn.addEventListener('click', ()=>{ try{ submitPersonalWorkout(); }catch(e){ console.warn('submit personal failed', e); } }); }
+  }catch(e){ console.warn('wire personal workout failed', e); }
+  // render existing history into the Tasks screen
+  try{ renderPersonalHistory(); }catch(e){}
   // process any missed recovery since last session and start ticker
   try{ processRecoverySinceLastCheck(); }catch(e){}
   try{ startRecoveryTicker(); }catch(e){}
 });
+
+// Show allocation modal to distribute ability points across stats
+function showAllocateModal(){
+  const available = Math.max(0, Number(state.available || 0));
+  // build modal DOM
+  const overlay = document.createElement('div'); overlay.className = 'alloc-overlay';
+  const box = document.createElement('div'); box.className = 'alloc-modal';
+  const title = document.createElement('h3'); title.textContent = `Allocate Ability Points (${available} available)`;
+  box.appendChild(title);
+
+  // local working copy of stats
+  const working = Object.assign({}, state.stats);
+  const allocated = {spent:0};
+  const statKeys = ['str','vit','agi','per','int'];
+  const rows = {};
+
+  statKeys.forEach(k=>{
+    const row = document.createElement('div'); row.className = 'alloc-row';
+    const name = document.createElement('div'); name.className = 'stat-name'; name.textContent = k.toUpperCase();
+    const controls = document.createElement('div'); controls.className = 'alloc-controls';
+    const minus = document.createElement('button'); minus.type = 'button'; minus.textContent = '−';
+    const val = document.createElement('div'); val.className = 'stat-val'; val.textContent = String(working[k] || 0);
+    const plus = document.createElement('button'); plus.type = 'button'; plus.textContent = '+';
+    controls.appendChild(minus); controls.appendChild(val); controls.appendChild(plus);
+    row.appendChild(name); row.appendChild(controls);
+    box.appendChild(row);
+    rows[k] = {valEl: val};
+
+    minus.addEventListener('click', ()=>{
+      if((working[k]||0) <= (state.stats[k]||0)) return; // can't go below original
+      working[k] = Math.max(state.stats[k]||0, (working[k]||0) - 1);
+      allocated.spent = computeSpent();
+      rows[k].valEl.textContent = String(working[k]);
+      title.textContent = `Allocate Ability Points (${available - allocated.spent} available)`;
+    });
+    plus.addEventListener('click', ()=>{
+      if(allocated.spent >= available) return; // no more points
+      working[k] = (working[k]||0) + 1;
+      allocated.spent = computeSpent();
+      rows[k].valEl.textContent = String(working[k]);
+      title.textContent = `Allocate Ability Points (${available - allocated.spent} available)`;
+    });
+  });
+
+  function computeSpent(){
+    let s = 0; statKeys.forEach(k=>{ s += Math.max(0, (working[k]||0) - (state.stats[k]||0)); }); return s;
+  }
+
+  // footer actions
+  const footer = document.createElement('div'); footer.className = 'alloc-footer';
+  const btnCancel = document.createElement('button'); btnCancel.type = 'button'; btnCancel.className = 'cancel'; btnCancel.textContent = 'Cancel';
+  const btnConfirm = document.createElement('button'); btnConfirm.type = 'button'; btnConfirm.className = 'confirm'; btnConfirm.textContent = 'Confirm';
+  footer.appendChild(btnCancel); footer.appendChild(btnConfirm);
+  box.appendChild(footer);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  function close(){ try{ document.body.removeChild(overlay); }catch(e){} }
+  btnCancel.addEventListener('click', ()=>{ close(); });
+  btnConfirm.addEventListener('click', async ()=>{
+    const spent = computeSpent();
+    if(spent <= 0){ close(); return; }
+    // apply working stats and deduct available
+    statKeys.forEach(k=>{ state.stats[k] = working[k] || 0; });
+    state.available = Math.max(0, (state.available || 0) - spent);
+    try{ await saveState(); }catch(e){ console.warn('save alloc failed', e); }
+    close(); render();
+  });
+  // allow clicking overlay to cancel
+  overlay.addEventListener('click', (ev)=>{ if(ev.target === overlay) close(); });
+}
