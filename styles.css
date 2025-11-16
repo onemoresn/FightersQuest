@@ -57,10 +57,11 @@ body{font-family:Inter,system-ui,Arial;background:#07121a;color:#dff6ff;}
 /* Task buttons (modern look + completion animation) */
 .task-btn{display:flex;align-items:center;justify-content:space-between;width:100%;padding:10px 12px;border-radius:10px;border:none;background:linear-gradient(90deg,#12343a,#0b2b2f);color:#cfefff;font-weight:600;cursor:pointer;transition:transform 200ms ease, box-shadow 200ms ease, background 250ms ease;position:relative;overflow:hidden}
 .task-main{flex:1;text-align:left}
-.task-check{display:inline-block;width:28px;height:28px;border-radius:8px;background:transparent;color:#9bd8ff;font-weight:800;line-height:28px;text-align:center;opacity:0;transform:scale(0.6);transition:all 250ms cubic-bezier(.2,.9,.3,1)}
+.task-check{display:inline-block;width:28px;height:28px;border-radius:8px;background:transparent;color:inherit;font-weight:800;line-height:28px;text-align:center;opacity:0;transform:scale(0.6);transition:all 250ms cubic-bezier(.2,.9,.3,1)}
 .task-btn:hover{transform:translateY(-4px);box-shadow:0 12px 30px rgba(0,160,200,0.08)}
 .task-btn.completed{background:linear-gradient(90deg,#6ad29b,#39c37a);color:#04221a}
 .task-btn.completed .task-check{opacity:1;transform:scale(1)}
+.task-btn.completed[disabled] .task-check{color:#04221a;opacity:1;transform:scale(1);font-size:16px}
 .task-btn.completed .task-main{text-decoration:line-through;opacity:0.95}
 .task-btn:active{transform:translateY(-2px) scale(0.997)}
 .task-btn[aria-pressed="true"]{outline:2px solid rgba(255,255,255,0.03)}
@@ -103,6 +104,96 @@ body{font-family:Inter,system-ui,Arial;background:#07121a;color:#dff6ff;}
 }
 .ability-popup.show{animation:xp-pop 1.2s cubic-bezier(.2,.9,.3,1) forwards}
 
+/* Ability Points allocation modal */
+.alloc-overlay{position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(1,6,8,0.6);display:flex;align-items:center;justify-content:center;z-index:100000}
+.alloc-modal{width:520px;max-width:96%;background:linear-gradient(180deg,#08161a,#042022);border-radius:10px;padding:20px;border:1px solid rgba(190,234,255,0.06);color:#dff6ff}
+.alloc-modal h3{margin-bottom:8px;font-family:Orbitron,monospace;color:#bfeaff}
+.alloc-row{display:flex;align-items:center;justify-content:space-between;padding:8px 6px;border-radius:6px}
+.alloc-row .stat-name{font-weight:700}
+.alloc-row .stat-val{width:56px;text-align:center;font-weight:800}
+.alloc-controls{display:flex;gap:8px}
+.alloc-controls button{width:34px;height:34px;border-radius:6px;border:none;cursor:pointer;background:rgba(255,255,255,0.04);color:#cfefff}
+.alloc-footer{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+.alloc-footer button{padding:8px 12px;border-radius:6px;border:none;cursor:pointer}
+.alloc-footer .confirm{background:linear-gradient(90deg,#3bd37a,#7ef39a);color:#03221a}
+.alloc-footer .cancel{background:rgba(255,255,255,0.04);color:#cfefff}
+
+/* Inventory modal (reuse alloc styles where possible) */
+.inv-overlay{position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(1,6,8,0.6);display:flex;align-items:center;justify-content:center;z-index:100000}
+.inv-modal{width:640px;max-width:96%;background:linear-gradient(180deg,#08161a,#042022);border-radius:10px;padding:18px;border:1px solid rgba(190,234,255,0.06);color:#dff6ff}
+.inv-list{display:flex;flex-direction:column;gap:8px;max-height:360px;overflow:auto;padding-right:6px}
+.inv-item{display:flex;align-items:center;justify-content:space-between;padding:8px;border-radius:8px;background:linear-gradient(90deg,#06171b,#031014)}
+.inv-controls{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.inv-controls label{color:#cfefff;font-size:13px}
+.inv-controls .inv-sort{background:rgba(255,255,255,0.03);border:1px solid rgba(150,220,255,0.06);color:#dff6ff;padding:6px;border-radius:6px}
+.inv-left{display:flex;align-items:center;gap:10px}
+.inv-icon{width:36px;height:36px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;background:linear-gradient(90deg,#081217,#0b2028);font-size:20px;margin-right:8px}
+.inv-item .meta{display:flex;gap:12px;align-items:center}
+.inv-actions button{margin-left:8px;padding:6px 8px;border-radius:6px;border:none;cursor:pointer}
+.inv-rarity-common{opacity:0.95}
+.inv-rarity-rare{box-shadow:0 6px 16px rgba(60,160,255,0.06)}
+.inv-rarity-epic{box-shadow:0 8px 26px rgba(180,80,255,0.06)}
+
+/* Equipment panel */
+.equipment-panel{margin-top:14px;border-top:1px solid rgba(190,234,255,0.03);padding-top:12px}
+.equipment-panel .eq-title{font-weight:800;color:#bfeaff;margin-bottom:8px}
+.eq-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
+.eq-slot{background:linear-gradient(90deg,#06171b,#031014);padding:10px;border-radius:8px;display:flex;flex-direction:column;gap:8px}
+.eq-slot .slot-name{font-size:12px;color:#9bd8ff;font-weight:800}
+.eq-slot .slot-item{font-weight:700;color:#ffd86b}
+.eq-slot .slot-bonus{font-size:12px;color:#dff6ff}
+.eq-slot .slot-actions{display:flex;gap:8px;justify-content:flex-end}
+.eq-slot button{background:rgba(255,255,255,0.03);border:1px solid rgba(150,220,255,0.06);color:#cfefff;padding:6px 8px;border-radius:6px;cursor:pointer}
+.eq-slot button.danger{background:linear-gradient(90deg,#ff7b7b,#d93939);color:#fff;border:none}
+
+/* Rarity color badges for equipment */
+.rarity-common .eq-icon{background:linear-gradient(90deg,#bfd8b6,#8fd89a)}
+.rarity-rare .eq-icon{background:linear-gradient(90deg,#9ad1ff,#4aa8ff)}
+.rarity-epic .eq-icon{background:linear-gradient(90deg,#d39aff,#a45bff)}
+.eq-icon{width:26px;height:26px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;color:#041616;font-weight:800;margin-right:8px}
+.eq-slot .slot-top{display:flex;align-items:center;justify-content:space-between}
+.eq-slot .slot-left{display:flex;align-items:center}
+
+/* Dungeon card */
+.dungeon-card{display:flex;align-items:center;justify-content:space-between;padding:12px;border-radius:10px;background:linear-gradient(180deg,rgba(5,12,16,0.6),rgba(2,6,8,0.45));border:1px solid rgba(120,200,255,0.04);margin-bottom:8px}
+.dungeon-left{display:flex;align-items:center;gap:12px}
+.dungeon-title{font-weight:800;color:#ffd86b}
+.dungeon-meta{font-size:12px;color:#a8e6ff}
+.dungeon-actions button{background:linear-gradient(90deg,#0ea0ff,#3bd3ff);border:none;color:#022429;padding:8px 12px;border-radius:10px;font-weight:800;cursor:pointer}
+
+/* monster icon used in dungeon list */
+.monster-icon{width:36px;height:36px;display:inline-flex;align-items:center;justify-content:center;border-radius:8px;background:linear-gradient(90deg,#081217,#0b2028);font-size:20px;margin-right:8px}
+
+/* Dungeon badge for very high-level dungeons */
+.dungeon-badge{display:inline-block;padding:6px 8px;border-radius:8px;font-weight:800;font-size:12px;margin-left:8px}
+.dungeon-badge.legendary{background:linear-gradient(90deg,#ff7b7b,#d93939);color:#fff}
+
+/* Skills panel styling reuses eq-grid layout */
+.skills-panel{margin-top:12px;border-top:1px solid rgba(190,234,255,0.03);padding-top:12px}
+.skill-item{display:flex;align-items:center;justify-content:space-between;padding:8px;border-radius:8px;background:linear-gradient(90deg,#06171b,#031014)}
+.skill-left{display:flex;align-items:center}
+.skill-icon{width:40px;height:40px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;margin-right:12px;background:linear-gradient(90deg,#fff2,#fff2);color:#041616;font-size:20px}
+.skill-name{font-weight:800;color:#ffd86b}
+.skill-desc{font-size:12px;color:#a8e6ff}
+
+/* Skills grid tiles */
+.skill-tile{display:flex;align-items:center;gap:12px;padding:10px;border-radius:8px;background:linear-gradient(90deg,#06171b,#031014);cursor:pointer;border:1px solid rgba(150,220,255,0.04)}
+.skill-tile .skill-icon{width:48px;height:48px;border-radius:10px;font-size:22px;background:linear-gradient(90deg,#ffd86b,#ff9a4d);color:#041616}
+.skill-tile .skill-info{display:flex;flex-direction:column}
+.skill-tile .skill-name{font-size:14px}
+.skill-tile .skill-desc{font-size:12px;color:#a8e6ff}
+.skill-tile.rarity-rare .skill-icon{background:linear-gradient(90deg,#9ad1ff,#4aa8ff)}
+.skill-tile.rarity-epic .skill-icon{background:linear-gradient(90deg,#d39aff,#a45bff)}
+
+/* Skill modal */
+.skill-overlay{position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(1,6,8,0.6);display:flex;align-items:center;justify-content:center;z-index:100000}
+.skill-modal{width:560px;max-width:96%;background:linear-gradient(180deg,#08161a,#042022);border-radius:10px;padding:18px;border:1px solid rgba(190,234,255,0.06);color:#dff6ff}
+.skill-list{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow:auto;padding-right:6px}
+.skill-item{display:flex;gap:12px;align-items:center;justify-content:space-between}
+.skill-left{font-size:20px}
+.skill-body{flex:1;margin-left:8px}
+.skill-right button{background:linear-gradient(90deg,#0ea0ff,#3bd3ff);border:none;color:#022429;padding:6px 10px;border-radius:8px;cursor:pointer}
+
 @media (max-width:700px){.level-number{font-size:40px}.status-card{padding:18px}}
 
 /* Screens and bottom nav */
@@ -117,6 +208,33 @@ body{font-family:Inter,system-ui,Arial;background:#07121a;color:#dff6ff;}
 #challenges-list .challenge .meta{color:#dff6ff}
 #quests-list .opponent{display:flex;justify-content:space-between;align-items:center;padding:10px;border-radius:6px;margin-bottom:8px;background:linear-gradient(180deg,rgba(255,255,255,0.01),transparent)}
 #quests-list .opponent{display:block}
+
+/* Tabbed challenge controls */
+.challenge-tabs{display:flex;gap:10px;margin-bottom:14px}
+.tab-button{background:linear-gradient(90deg,#4fd3ff,#2ea8ff);border:none;color:#021a1a;padding:8px 12px;border-radius:14px;font-weight:700;cursor:pointer;box-shadow:0 8px 18px rgba(14,160,255,0.06);transition:transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease}
+.tab-button:hover{transform:translateY(-3px);box-shadow:0 12px 30px rgba(14,160,255,0.12)}
+.tab-button.active{background:linear-gradient(90deg,#ff7b7b,#ff4d4d);color:#ffffff;box-shadow:0 18px 46px rgba(255,100,80,0.22);border:1px solid rgba(255,120,90,0.12)}
+.challenge-tab-content{margin-top:6px}
+
+/* Icon spacing inside tab buttons */
+.tab-icon{display:inline-block;margin-right:8px;font-size:16px}
+
+/* Special styling for Fighting Skills tab (non-active) */
+/* Special styling per category tab (non-active) */
+.tab-button.tab-strength{background:linear-gradient(90deg,#7ef39a,#39c37a);color:#022429}
+.tab-button.tab-strength:hover{box-shadow:0 12px 30px rgba(60,200,120,0.12)}
+.tab-button.tab-cardio{background:linear-gradient(90deg,#ffd86b,#ff9a4d);color:#081717}
+.tab-button.tab-cardio:hover{box-shadow:0 12px 30px rgba(255,160,60,0.12)}
+.tab-button.tab-flexibility{background:linear-gradient(90deg,#6ee3ff,#2fb6ff);color:#022429}
+.tab-button.tab-flexibility:hover{box-shadow:0 12px 30px rgba(80,180,240,0.12)}
+.tab-button.tab-fighting{background:linear-gradient(90deg,#8c6bff,#c88cff);color:#021a1a}
+.tab-button.tab-fighting:hover{box-shadow:0 12px 30px rgba(160,110,255,0.12)}
+
+/* Active states with higher specificity to override generic active rule */
+#challenges-list .tab-button.tab-strength.active{background:linear-gradient(90deg,#2fb65a,#0ea04a);color:#ffffff;box-shadow:0 18px 46px rgba(40,180,100,0.22);border:1px solid rgba(30,200,120,0.12)}
+#challenges-list .tab-button.tab-cardio.active{background:linear-gradient(90deg,#ff8c3b,#ff5a1a);color:#ffffff;box-shadow:0 18px 46px rgba(255,120,50,0.22);border:1px solid rgba(255,120,60,0.12)}
+#challenges-list .tab-button.tab-flexibility.active{background:linear-gradient(90deg,#00c6ff,#0077ff);color:#ffffff;box-shadow:0 18px 46px rgba(0,120,220,0.22);border:1px solid rgba(0,110,220,0.12)}
+#challenges-list .tab-button.tab-fighting.active{background:linear-gradient(90deg,#4b2bff,#9a4dff);color:#ffffff;box-shadow:0 18px 46px rgba(120,80,255,0.22);border:1px solid rgba(150,120,255,0.12)}
 
 /* Opponent card styles for RPG look */
 .opponent-card{display:flex;align-items:center;gap:12px;padding:12px;border-radius:10px;background:linear-gradient(180deg,rgba(5,12,16,0.6),rgba(2,6,8,0.45));border:1px solid rgba(120,200,255,0.04);box-shadow:0 8px 28px rgba(0,0,0,0.6)}
@@ -165,6 +283,10 @@ body{font-family:Inter,system-ui,Arial;background:#07121a;color:#dff6ff;}
 .challenge button:active:not([disabled]), .opponent button:active:not([disabled]){
 	transform: translateY(-1px) scale(0.995);
 }
+
+/* Ensure tab-button styling wins over generic button rules inside challenges list */
+#challenges-list .tab-button{background:linear-gradient(90deg,#4fd3ff,#2ea8ff);color:#021a1a;padding:8px 12px;border-radius:14px;font-weight:700}
+#challenges-list .tab-button.active{background:linear-gradient(90deg,#ff7b7b,#ff4d4d);color:#ffffff;box-shadow:0 18px 46px rgba(255,100,80,0.22);border:1px solid rgba(255,120,90,0.12)}
 
 /* Particle effects container (level up / victory / defeat) */
 .particle-wrap{position:fixed;left:0;top:0;right:0;bottom:0;pointer-events:none;overflow:visible;z-index:99998}
