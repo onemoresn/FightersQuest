@@ -11,19 +11,7 @@
   <noscript>
     <div style="background:#111;color:#fff;padding:12px;text-align:center">JavaScript is disabled — enable JS to use the app.</div>
   </noscript>
-  <script>
-    // Inline quick-check badge so we can see if inline scripts run
-    try{
-      const el = document.createElement('div');
-      el.id = 'inline-badge';
-      el.textContent = 'Inline JS OK';
-      el.style.position = 'fixed'; el.style.left='12px'; el.style.top='12px';
-      el.style.padding='6px 8px'; el.style.background='rgba(0,0,0,0.4)'; el.style.color='#bfeaff';
-      el.style.border='1px solid rgba(190,234,255,0.08)'; el.style.borderRadius='6px'; el.style.zIndex='99999';
-      document.addEventListener('DOMContentLoaded', ()=>document.body.appendChild(el));
-      console.log('Inline check appended');
-    }catch(e){console.warn('Inline badge failed', e)}
-  </script>
+  <!-- Inline badge removed to keep the UI clean -->
 
   <div class="app-bg">
     <div class="container">
@@ -51,6 +39,7 @@
                 <button id="decrease-level">-</button>
                 <button id="increase-level">+</button>
                 <button id="reset-all">Reset All</button>
+                <button id="open-inventory">Inventory</button>
               </div>
             </div>
           </div>
@@ -118,6 +107,20 @@
             </div>
           </div>
 
+          <div id="equipment-panel" class="equipment-panel">
+            <div class="eq-title">Equipment</div>
+            <div id="eq-grid" class="eq-grid">
+              <!-- slots rendered here -->
+            </div>
+          </div>
+
+          <div id="skills-panel" class="skills-panel">
+            <div class="eq-title">Skills & Magic</div>
+            <div id="skills-grid" class="eq-grid">
+              <!-- skills rendered here -->
+            </div>
+          </div>
+
           <!-- Tasks moved to separate Tasks screen -->
         </div>
       </div>
@@ -143,9 +146,9 @@
         <div class="status-card">
           <div class="status-title">TASKS</div>
           <div class="req-list">
-            <div class="req-item">
+              <div class="req-item">
               <button id="daily-complete" class="task-btn" data-key="daily" data-xp="20" aria-pressed="false">
-                <span class="task-main">Daily: <span id="daily-req">25</span> jumping jacks</span>
+                <span class="task-main">Daily: <span id="daily-req">25</span> <span id="daily-activity">jumping jacks</span></span>
                 <span class="task-check" aria-hidden="true">✓</span>
               </button>
             </div>
@@ -171,6 +174,18 @@
               <button id="reset-daily">Reset Day</button>
               <button id="reset-week">Reset Week</button>
             </div>
+            <hr style="margin:12px 0;border-color:rgba(200,240,255,0.03)" />
+            <div class="req-item">
+              <div style="font-weight:800;margin-bottom:6px">Personal Workout</div>
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <input id="personal-workout-name" type="text" placeholder="Workout name (optional)" style="flex:1;padding:8px;border-radius:8px;border:1px solid rgba(150,220,255,0.06);background:transparent;color:#dff6ff" />
+                <input id="personal-workout-hours" type="number" min="0" placeholder="Hours" style="width:90px;padding:8px;border-radius:8px;border:1px solid rgba(150,220,255,0.06);background:transparent;color:#dff6ff" />
+                <input id="personal-workout-minutes" type="number" min="0" placeholder="Minutes" style="width:110px;padding:8px;border-radius:8px;border:1px solid rgba(150,220,255,0.06);background:transparent;color:#dff6ff" />
+                <button id="personal-workout-submit" style="padding:8px 12px;border-radius:8px;border:none;background:linear-gradient(90deg,#0ea0ff,#3bd3ff);color:#022429;cursor:pointer">Log Workout</button>
+              </div>
+              <div id="personal-workout-feedback" style="margin-top:8px;font-size:13px;color:#a8e6ff"></div>
+            </div>
+            <div id="personal-workout-history" style="margin-top:12px;max-height:200px;overflow:auto;padding-right:6px"></div>
           </div>
           <div style="margin-top:12px">
             <button id="back-from-tasks">Back</button>
@@ -182,10 +197,7 @@
         <div class="status-card">
           <div class="status-title">QUESTS</div>
           <div id="quests-list">
-            <!-- Fallback static quests -->
-            <div class="opponent"><div class="meta">Wild Wolf — Lv. 3</div><div><button>Fight</button></div></div>
-            <div class="opponent"><div class="meta">Bandit Scout — Lv. 6</div><div><button>Fight</button></div></div>
-            <div class="opponent"><div class="meta">Orc Brute — Lv. 11</div><div><button>Fight</button></div></div>
+            <!-- Dungeons will be rendered here -->
           </div>
           <div class="quests-pager" id="quests-pager" style="margin:10px 0;display:flex;align-items:center;gap:8px;justify-content:center">
             <button id="quests-prev">« Prev</button>
@@ -195,6 +207,20 @@
           <div id="battle-log" style="margin-top:12px;color:#dff6ff;min-height:60px"></div>
           <div style="margin-top:12px">
             <button id="back-from-quests">Back</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Dungeon screen: shows monsters inside a selected dungeon -->
+      <div id="screen-dungeon" class="screen hidden">
+        <div class="status-card">
+          <div class="status-title">DUNGEON</div>
+          <div id="dungeon-info" style="margin-bottom:8px"></div>
+          <div id="dungeon-monsters" style="display:flex;flex-direction:column;gap:8px;max-height:320px;overflow:auto;padding-right:6px">
+            <!-- Monsters will be listed here -->
+          </div>
+          <div style="margin-top:12px">
+            <button id="back-from-dungeon">Back to Dungeons</button>
           </div>
         </div>
       </div>
@@ -223,6 +249,8 @@
             <div class="battle-actions">
               <button id="battle-attack" class="fight-btn">Attack</button>
               <button id="battle-defend" class="fight-btn defend">Defend</button>
+              <button id="battle-use-item" class="fight-btn">Use Item</button>
+              <button id="battle-use-skill" class="fight-btn">Use Skill</button>
             </div>
           </div>
         </div>
