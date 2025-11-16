@@ -211,13 +211,28 @@ body{font-family:Inter,system-ui,Arial;background:#07121a;color:#dff6ff;}
 
 /* Tabbed challenge controls */
 .challenge-tabs{display:flex;gap:10px;margin-bottom:14px}
-.tab-button{background:linear-gradient(90deg,#4fd3ff,#2ea8ff);border:none;color:#021a1a;padding:8px 12px;border-radius:14px;font-weight:700;cursor:pointer;box-shadow:0 8px 18px rgba(14,160,255,0.06);transition:transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease}
+/* allow tabs to scroll horizontally on narrow screens */
+.challenge-tabs{overflow-x:auto;-webkit-overflow-scrolling:touch;flex-wrap:nowrap;padding-bottom:6px}
+.tab-button{background:linear-gradient(90deg,#4fd3ff,#2ea8ff);border:none;color:#021a1a;padding:8px 12px;border-radius:14px;font-weight:700;cursor:pointer;box-shadow:0 8px 18px rgba(14,160,255,0.06);transition:transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease;flex:0 0 auto}
 .tab-button:hover{transform:translateY(-3px);box-shadow:0 12px 30px rgba(14,160,255,0.12)}
 .tab-button.active{background:linear-gradient(90deg,#ff7b7b,#ff4d4d);color:#ffffff;box-shadow:0 18px 46px rgba(255,100,80,0.22);border:1px solid rgba(255,120,90,0.12)}
 .challenge-tab-content{margin-top:6px}
 
 /* Icon spacing inside tab buttons */
 .tab-icon{display:inline-block;margin-right:8px;font-size:16px}
+
+/* Responsive: make category tabs compact on small/mobile screens */
+@media (max-width:520px){
+	.challenge-tabs{gap:8px}
+	.tab-button{padding:6px 8px;font-size:13px;border-radius:10px}
+	.tab-icon{font-size:14px;margin-right:6px}
+	.tab-button .tab-label{white-space:nowrap}
+}
+@media (max-width:380px){
+	.challenge-tabs{gap:6px}
+	.tab-button{padding:5px 7px;font-size:12px;border-radius:8px}
+	.tab-icon{font-size:12px;margin-right:6px}
+}
 
 /* Special styling for Fighting Skills tab (non-active) */
 /* Special styling per category tab (non-active) */
