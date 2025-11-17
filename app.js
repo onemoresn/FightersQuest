@@ -2,6 +2,12 @@ const STORAGE_KEY = 'fighterQuestState_v1';
 
 console.log('app.js loading');
 
+// Recovery tick interval (ms) used by the recovery ticker and missed-recovery catch-up.
+// User-request: fire 1 increment every 0.03 seconds => interval 30ms
+const RECOVER_INTERVAL_MS = 30;
+// Throttle persistence from the regen loop to avoid excessive writes at high tick rates
+const RECOVER_SAVE_THROTTLE_MS = 1000;
+
 const defaultState = {
   // Start user at level 1 and reset most values to zero as requested
   level: 1,
@@ -32,6 +38,16 @@ const defaultState = {
     weeklyPush: {completed:false},
     weeklySquat: {completed:false},
     weeklySit: {completed:false}
+  },
+  
+  // which challenge categories are unlocked
+  unlockedCategories: {
+    'Fighting Skills': false
+  },
+  // progression upgrade flags
+  upgrades: {
+    weeklyPushups50: false,
+    dailyJumpingJacks50: false
   }
 }
 
@@ -111,6 +127,14 @@ async function initState(){
   // ensure computed fields
   if(!state.xp || !state.xp.toNext) state.xp = { cur: (state.xp && state.xp.cur) || 0, toNext: xpToLevelUp(state.level) };
   ensureHPMPForState();
+  // ensure newer task keys exist even when loading older saves
+  try{ ensureTasksShape(); }catch(e){ console.warn('ensureTasksShape failed', e); }
+  // ensure challenge completion date map exists for daily challenges
+  try{ if(!state.challengeCompletionDate || typeof state.challengeCompletionDate !== 'object') state.challengeCompletionDate = {}; }catch(e){}
+  // ensure challenge completion week map exists for weekly challenges
+  try{ if(!state.challengeCompletionWeek || typeof state.challengeCompletionWeek !== 'object') state.challengeCompletionWeek = {}; }catch(e){}
+  // ensure upgrades flags exist
+  try{ state.upgrades = state.upgrades || { weeklyPushups50:false, dailyJumpingJacks50:false }; }catch(e){}
 }
 
 // ensure challenges mapping exists
@@ -210,11 +234,25 @@ function showRecoveryPopup(type, amount, targetEl){
     }
     div.textContent = label;
     document.body.appendChild(div);
-    // position near targetEl
+    // position near targetEl (clamped to viewport so popup isn't cut off)
+    const padding = 8; // px from edge of viewport
     if(targetEl){
       const r = targetEl.getBoundingClientRect();
-      div.style.left = (r.left + r.width/2) + 'px';
-      div.style.top = (r.top - 10) + 'px';
+      // desired center x above the element
+      let leftPx = r.left + r.width / 2;
+      let topPx = r.top - 10;
+      // measure popup size (offsetWidth will be available after append)
+      const bw = div.offsetWidth || 120;
+      const bh = div.offsetHeight || 28;
+      // ensure horizontally within viewport
+      if(leftPx - bw/2 < padding) leftPx = bw/2 + padding;
+      if(leftPx + bw/2 > window.innerWidth - padding) leftPx = window.innerWidth - bw/2 - padding;
+      // if there's no room above the element, position below it instead
+      if(topPx < padding) topPx = r.bottom + 10;
+      // clamp vertical as well
+      if(topPx + bh > window.innerHeight - padding) topPx = Math.max(padding, window.innerHeight - bh - padding);
+      div.style.left = leftPx + 'px';
+      div.style.top = topPx + 'px';
     } else {
       div.style.left = '50%';
       div.style.top = '20%';
@@ -222,6 +260,42 @@ function showRecoveryPopup(type, amount, targetEl){
     requestAnimationFrame(()=> div.classList.add('show'));
     setTimeout(()=>{ try{ document.body.removeChild(div); }catch(e){} }, 1000);
   }catch(e){console.warn('showRecoveryPopup failed', e)}
+}
+
+// Show a brief congratulatory popup when the player levels up
+function showLevelUpPopup(level){
+  try{
+    const div = document.createElement('div');
+    div.className = 'ability-popup';
+    div.textContent = `Level Up! You reached Level ${level}`;
+    document.body.appendChild(div);
+    requestAnimationFrame(()=>div.classList.add('show'));
+    setTimeout(()=>{ try{ div.classList.remove('show'); setTimeout(()=>div.remove(),400); }catch(e){} }, 2200);
+  }catch(e){ console.warn('showLevelUpPopup failed', e); }
+}
+
+// show a brief unlock popup for new categories
+function showUnlockPopup(category){
+  try{
+    const div = document.createElement('div');
+    div.className = 'ability-popup';
+    div.textContent = `Congratulations — you've unlocked the "${category}" category!`;
+    document.body.appendChild(div);
+    requestAnimationFrame(()=>div.classList.add('show'));
+    setTimeout(()=>{ try{ div.classList.remove('show'); setTimeout(()=>div.remove(),400); }catch(e){} }, 2400);
+  }catch(e){console.warn('showUnlockPopup failed', e)}
+}
+
+// generic notice popup using the same animation style as ability popup
+function showNoticePopup(message){
+  try{
+    const div = document.createElement('div');
+    div.className = 'ability-popup';
+    div.textContent = message;
+    document.body.appendChild(div);
+    requestAnimationFrame(()=>div.classList.add('show'));
+    setTimeout(()=>{ try{ div.classList.remove('show'); setTimeout(()=>div.remove(),400); }catch(e){} }, 2000);
+  }catch(e){ console.warn('showNoticePopup failed', e); }
 }
 
 function processRecoverySinceLastCheck(){
@@ -244,8 +318,58 @@ function startRecoveryTicker(){
   // run periodic recovery while the page is visible
   setInterval(()=>{
     if(document.hidden) return;
-    applyRecoveryTick(1);
+    try{ applyRecoveryTick(1); }catch(e){ console.warn('applyRecoveryTick error', e); }
   }, RECOVER_INTERVAL_MS);
+}
+
+// Apply recovery for HP/MP/Stamina. `ticks` is number of intervals to apply.
+function applyRecoveryTick(ticks){
+  if(!ticks || ticks <= 0) return;
+  // Ensure state shapes
+  state.hp = state.hp || { cur: 0, max: computeHPMax(state.level || 1) };
+  state.mp = state.mp || { cur: 0, max: computeMPMax(state.level || 1) };
+  state.stamina = state.stamina || { cur: 0, max: 100 };
+  const prev = { hp: state.hp.cur, mp: state.mp.cur, stam: state.stamina.cur };
+
+  // Use fractional buffers so very small intervals (e.g. 30ms) accumulate correctly
+  state._regenBuffer = state._regenBuffer || { hp: 0, mp: 0, stam: 0 };
+  // Original design used percentages applied every 10000ms (10s):
+  // HP: 0.5% of max per 10s, MP: 1% per 10s, Stamina: 2% per 10s.
+  const scaleFactor = (ticks * RECOVER_INTERVAL_MS) / 10000; // fraction of the original 10s window
+  // Recover 1 whole unit per second for each resource (use fractional buffer for sub-second ticks)
+  const seconds = (ticks * RECOVER_INTERVAL_MS) / 1000; // seconds covered by these ticks
+  // Each resource gains 1 unit every 0.5s -> 2 units per second
+  const hpFraction = 2 * seconds;   // HP: +2 per second (fractional accumulation)
+  const mpFraction = 2 * seconds;   // MP: +2 per second
+  const stamFraction = 2 * seconds; // Stamina: +2 per second
+  state._regenBuffer.hp += hpFraction;
+  state._regenBuffer.mp += mpFraction;
+  state._regenBuffer.stam += stamFraction;
+  // Apply only whole units to avoid fractional health values; keep remainder in buffer
+  const addHp = Math.floor(state._regenBuffer.hp);
+  const addMp = Math.floor(state._regenBuffer.mp);
+  const addStam = Math.floor(state._regenBuffer.stam);
+  if(addHp > 0){ state.hp.cur = Math.min(state.hp.max || 0, (state.hp.cur || 0) + addHp); state._regenBuffer.hp -= addHp; }
+  if(addMp > 0){ state.mp.cur = Math.min(state.mp.max || 0, (state.mp.cur || 0) + addMp); state._regenBuffer.mp -= addMp; }
+  if(addStam > 0){ state.stamina.cur = Math.min(state.stamina.max || 0, (state.stamina.cur || 0) + addStam); state._regenBuffer.stam -= addStam; }
+
+  // Only show small recovery popups if there was actual recovery
+  try{
+    if(Math.round(state.hp.cur) > Math.round(prev.hp)) showRecoveryPopup('hp', Math.round(state.hp.cur - prev.hp), document.getElementById('hp-text'));
+    if(Math.round(state.mp.cur) > Math.round(prev.mp)) showRecoveryPopup('mp', Math.round(state.mp.cur - prev.mp), document.getElementById('mp-text'));
+    if(Math.round(state.stamina.cur) > Math.round(prev.stam)) showRecoveryPopup('stam', Math.round(state.stamina.cur - prev.stam), document.getElementById('stam-text'));
+  }catch(e){/* ignore popup errors */}
+
+  // persist and refresh UI
+  try{
+    const nowSave = Date.now();
+    const didWholeChange = (addHp > 0) || (addMp > 0) || (addStam > 0);
+    state._regenSaveLast = state._regenSaveLast || 0;
+    if(didWholeChange || (nowSave - state._regenSaveLast >= RECOVER_SAVE_THROTTLE_MS)){
+      try{ saveState(); state._regenSaveLast = nowSave; }catch(e){ console.warn('saveState failed during applyRecoveryTick', e); }
+    }
+  }catch(e){ console.warn('saveState throttle logic failed', e); }
+  try{ render(); }catch(e){}
 }
 
 // --- Stat popup on level-up ---
@@ -281,6 +405,126 @@ function showStatPopup(deltas){
 }
 
 ensureHPMPForState();
+
+// Ensure tasks/unlockedTasks objects have all expected keys from defaults
+function ensureTasksShape(){
+  try{
+    state.tasks = state.tasks || {};
+    const defaults = defaultState.tasks || {};
+    Object.keys(defaults).forEach(k=>{
+      const defVal = defaults[k];
+      if(typeof state.tasks[k] !== 'object' || state.tasks[k] === null){
+        state.tasks[k] = (typeof defVal === 'object' && defVal !== null) ? Object.assign({}, defVal) : { completed: false };
+      } else {
+        if(!('completed' in state.tasks[k])) state.tasks[k].completed = !!(defVal && defVal.completed);
+      }
+    });
+  }catch(e){ console.warn('ensureTasksShape internal error', e); }
+}
+
+// Helpers for daily challenge expiration
+function todayKey(){
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+
+function expireDailyChallenges(){
+  try{
+    const now = Date.now();
+    const last = state._lastDailyExpiryCheck || 0;
+    if(now - last < 10000) return; // throttle to every 10s max
+    state._lastDailyExpiryCheck = now;
+    const today = todayKey();
+    let changed = false;
+    state.challenges = state.challenges || {};
+    state.challengeCompletionDate = state.challengeCompletionDate || {};
+    DAILY_CHALLENGE_IDS.forEach((id)=>{
+      if(state.challenges[id]){
+        const doneDay = state.challengeCompletionDate[id];
+        // If no timestamp or day changed, expire
+        if(!doneDay || doneDay !== today){
+          state.challenges[id] = false;
+          delete state.challengeCompletionDate[id];
+          changed = true;
+        }
+      }
+    });
+    if(changed){ try{ saveState(); }catch(e){ console.warn('saveState failed in expireDailyChallenges', e); } }
+  }catch(e){ console.warn('expireDailyChallenges error', e); }
+}
+
+function weekKey(){
+  // Return a stable key for the current week by using the Monday date (YYYY-MM-DD)
+  const d = new Date();
+  const day = (d.getDay() + 6) % 7; // Monday=0..Sunday=6
+  const monday = new Date(d);
+  monday.setHours(0,0,0,0);
+  monday.setDate(monday.getDate() - day);
+  const y = monday.getFullYear();
+  const m = String(monday.getMonth()+1).padStart(2,'0');
+  const da = String(monday.getDate()).padStart(2,'0');
+  return `${y}-${m}-${da}`;
+}
+
+function expireWeeklyChallenges(){
+  try{
+    const now = Date.now();
+    const last = state._lastWeeklyExpiryCheck || 0;
+    if(now - last < 10000) return; // throttle every 10s
+    state._lastWeeklyExpiryCheck = now;
+    const wk = weekKey();
+    let changed = false;
+    state.challenges = state.challenges || {};
+    state.challengeCompletionWeek = state.challengeCompletionWeek || {};
+    WEEKLY_CHALLENGE_IDS.forEach((id)=>{
+      if(state.challenges[id]){
+        const doneWeek = state.challengeCompletionWeek[id];
+        if(!doneWeek || doneWeek !== wk){
+          state.challenges[id] = false;
+          delete state.challengeCompletionWeek[id];
+          changed = true;
+        }
+      }
+    });
+    if(changed){ try{ saveState(); }catch(e){ console.warn('saveState failed in expireWeeklyChallenges', e); } }
+  }catch(e){ console.warn('expireWeeklyChallenges error', e); }
+}
+
+// Apply progression-based upgrades when conditions are met
+function checkProgressionUpgrades(context){
+  try{
+    state.upgrades = state.upgrades || { weeklyPushups50:false, dailyJumpingJacks50:false };
+    // Upgrade weekly push-ups base to 50 when: level >= 10 AND 50 push-ups (daily) completed today
+    if(!state.upgrades.weeklyPushups50){
+      const hasLv = (state.level || 1) >= 10;
+      const didC1 = !!(state.challenges && state.challenges['c1']);
+      const today = todayKey();
+      const doneToday = state.challengeCompletionDate && state.challengeCompletionDate['c1'] === today;
+      if(hasLv && didC1 && doneToday){
+        state.taskBase = state.taskBase || {};
+        state.taskBase.weeklyPushups = 50;
+        state.upgrades.weeklyPushups50 = true;
+        try{ saveState(); }catch(e){}
+        try{ showNoticePopup('Weekly Push-ups increased to 50'); }catch(e){}
+      }
+    }
+    // Upgrade daily jumping jacks base to 50 when: level >= 10 AND 1 mile run completed
+    if(!state.upgrades.dailyJumpingJacks50){
+      const hasLv = (state.level || 1) >= 10;
+      const didMile = !!(state.challenges && state.challenges['c34']); // 1 mile run
+      if(hasLv && didMile){
+        state.taskBase = state.taskBase || {};
+        state.taskBase.dailyJumpingJacks = 50;
+        state.upgrades.dailyJumpingJacks50 = true;
+        try{ saveState(); }catch(e){}
+        try{ showNoticePopup('Daily Jumping Jacks increased to 50'); }catch(e){}
+      }
+    }
+  }catch(e){ console.warn('checkProgressionUpgrades error', e); }
+}
 
 function tieredRequirement(base, level){
   // Tiered scaling: every 5 levels increases requirement by 10%
@@ -341,7 +585,9 @@ function computeDailyTaskForLevel(level){
   let activity = 'jumping jacks';
 
   if(lv >= 1 && lv <= 10){
-    amount = 25; activity = 'jumping jacks';
+    // respect upgraded base if applied
+    amount = (state.taskBase && typeof state.taskBase.dailyJumpingJacks === 'number') ? state.taskBase.dailyJumpingJacks : 25;
+    activity = 'jumping jacks';
   } else if(lv >= 21 && lv <= 30){
     amount = 50; activity = 'jumping jacks';
   } else if(lv >= 61 && lv <= 599){
@@ -370,25 +616,64 @@ function xpToLevelUp(level){
 }
 
 // --- Challenges & Quests data ---
+// Daily-resettable challenges (must be completed within the same day)
+const DAILY_CHALLENGE_IDS = new Set(['c1','c4']); // 50 push-ups, 50 sit-ups
+// Weekly-resettable challenges (must be completed within the same week)
+const WEEKLY_CHALLENGE_IDS = new Set(['c2','c3']); // 100 and 150 push-ups
 const CHALLENGES = [
   // Strength
-  {id:'c1', label:'50 push-ups', type:'pushups', amount:50, xp:60, category: 'Strength'},
-  {id:'c2', label:'100 push-ups', type:'pushups', amount:100, xp:120, category: 'Strength'},
-  {id:'c3', label:'150 push-ups', type:'pushups', amount:150, xp:200, category: 'Strength'},
-  {id:'c4', label:'50 sit-ups', type:'situps', amount:50, xp:50, category: 'Strength'},
+  {id:'c1', label:'50 push-ups (Complete Today)', type:'pushups', amount:50, xp:60, category: 'Strength'},
+  {id:'c2', label:'100 push-ups (Complete This Week)', type:'pushups', amount:100, xp:120, category: 'Strength'},
+  {id:'c3', label:'150 push-ups (Complete This Week)', type:'pushups', amount:150, xp:200, category: 'Strength'},
+  {id:'c4', label:'50 sit-ups (Complete Today)', type:'situps', amount:50, xp:50, category: 'Strength'},
   {id:'c5', label:'100 sit-ups', type:'situps', amount:100, xp:110, category: 'Strength'},
   // Cardio (samples)
   {id:'c6', label:'2 km Run', type:'run', amount:2, xp:80, category: 'Cardio'},
   {id:'c7', label:'200 Jumping Jacks', type:'jumpingjacks', amount:200, xp:60, category: 'Cardio'},
   {id:'c8', label:'30-minute Cycling', type:'cycling', amount:30, xp:100, category: 'Cardio'},
+  // New Cardio challenge
+  {id:'c34', label:'1 mile Run', type:'run_mile', amount:1, xp:90, category: 'Cardio'},
   // Flexibility (samples)
   {id:'c9', label:'15 min Yoga Stretch', type:'yoga', amount:15, xp:50, category: 'Flexibility'},
   {id:'c10', label:'Hold Plank 2 min', type:'plank', amount:2, xp:70, category: 'Flexibility'},
-  // Fighting Skills (new category)
-  {id:'c11', label:'3× Sparring Rounds', type:'sparring', amount:3, xp:140, category: 'Fighting Skills'},
-  {id:'c12', label:'10 min Heavy Bag', type:'bag', amount:10, xp:90, category: 'Fighting Skills'},
-  {id:'c13', label:'Technique Drills 30 min', type:'drills', amount:30, xp:110, category: 'Fighting Skills'}
+  // Fighting Skills (replaced with user-requested drill list)
+  {id:'c11', label:'Switch between Orthodox and Southpaw - 20x', type:'stance_switch', amount:20, xp:40, category: 'Fighting Skills'},
+  {id:'c12', label:'Left Jab - 20x', type:'jab_left', amount:20, xp:40, category: 'Fighting Skills'},
+  {id:'c13', label:'Right Jab - 20x', type:'jab_right', amount:20, xp:40, category: 'Fighting Skills'},
+  {id:'c14', label:'Left Hook - 20x', type:'hook_left', amount:20, xp:45, category: 'Fighting Skills'},
+  {id:'c15', label:'Right Hook - 20x', type:'hook_right', amount:20, xp:45, category: 'Fighting Skills'},
+  {id:'c16', label:'Left Uppercut - 20x', type:'upper_left', amount:20, xp:50, category: 'Fighting Skills'},
+  {id:'c17', label:'Right Uppercut - 20x', type:'upper_right', amount:20, xp:50, category: 'Fighting Skills'},
+
+  {id:'c18', label:'Switch between Orthodox and Southpaw - 50x', type:'stance_switch', amount:50, xp:100, category: 'Fighting Skills'},
+  {id:'c19', label:'Left Jab - 50x', type:'jab_left', amount:50, xp:100, category: 'Fighting Skills'},
+  {id:'c20', label:'Right Jab - 50x', type:'jab_right', amount:50, xp:100, category: 'Fighting Skills'},
+  {id:'c21', label:'Left Hook - 50x', type:'hook_left', amount:50, xp:110, category: 'Fighting Skills'},
+  {id:'c22', label:'Right Hook - 50x', type:'hook_right', amount:50, xp:110, category: 'Fighting Skills'},
+  {id:'c23', label:'Left Uppercut - 50x', type:'upper_left', amount:50, xp:120, category: 'Fighting Skills'},
+  {id:'c24', label:'Right Uppercut - 50x', type:'upper_right', amount:50, xp:120, category: 'Fighting Skills'},
+
+  {id:'c25', label:'Switch between Orthodox and Southpaw - 100x', type:'stance_switch', amount:100, xp:200, category: 'Fighting Skills'},
+  {id:'c26', label:'Left Jab - 100x', type:'jab_left', amount:100, xp:200, category: 'Fighting Skills'},
+  {id:'c27', label:'Right Jab - 100x', type:'jab_right', amount:100, xp:200, category: 'Fighting Skills'},
+  {id:'c28', label:'Left Hook - 100x', type:'hook_left', amount:100, xp:220, category: 'Fighting Skills'},
+  {id:'c29', label:'Right Hook - 100x', type:'hook_right', amount:100, xp:220, category: 'Fighting Skills'},
+  {id:'c30', label:'Left Uppercut - 100x', type:'upper_left', amount:100, xp:240, category: 'Fighting Skills'},
+  {id:'c31', label:'Right Uppercut - 100x', type:'upper_right', amount:100, xp:240, category: 'Fighting Skills'}
 ];
+
+// Append daily variants for 100 and 150 push-ups
+CHALLENGES.push(
+  {id:'c32', label:'100 push-ups (Complete Today)', type:'pushups', amount:100, xp:120, category: 'Strength'},
+  {id:'c33', label:'150 push-ups (Complete Today)', type:'pushups', amount:150, xp:200, category: 'Strength'}
+);
+// add to daily reset set
+DAILY_CHALLENGE_IDS.add('c32');
+DAILY_CHALLENGE_IDS.add('c33');
+
+// Pagination for challenge lists
+const CHALLENGES_PER_PAGE = 5;
+let challengesPage = 0; // current page index for the active challenges tab
 
 // UI state: currently selected challenges tab
 let challengesTab = 'Strength';
@@ -648,10 +933,19 @@ function renderChallenges(){
   const wrap = document.getElementById('challenges-list');
   if(!wrap) return;
   try{
+    // expire daily challenges if the day changed
+    try{ expireDailyChallenges(); }catch(e){ console.warn('expireDailyChallenges failed', e); }
+    // expire weekly challenges if the week changed
+    try{ expireWeeklyChallenges(); }catch(e){ console.warn('expireWeeklyChallenges failed', e); }
     // Tabbed challenges view
     wrap.innerHTML = '';
     const tabs = document.createElement('div'); tabs.className = 'challenge-tabs';
-    const cats = ['Strength','Fighting Skills','Cardio','Flexibility'];
+    // Build categories list; hide 'Fighting Skills' until unlocked or player reaches level 5
+    const cats = ['Strength'];
+    if(state.level >= 10 || (state.unlockedCategories && state.unlockedCategories['Fighting Skills'])){
+      cats.push('Fighting Skills');
+    }
+    cats.push('Cardio','Flexibility');
     // mapping for icons and classes per category
     const catMeta = {
       'Strength': { icon: '🏋️', cls: 'tab-strength' },
@@ -666,38 +960,81 @@ function renderChallenges(){
       const iconHtml = meta.icon ? `<span class="tab-icon">${meta.icon}</span>` : '';
       tb.innerHTML = `${iconHtml}<span class="tab-label">${cat}</span>`;
       if(challengesTab === cat) tb.classList.add('active');
-      tb.addEventListener('click', ()=>{ challengesTab = cat; renderChallenges(); });
+      tb.addEventListener('click', ()=>{ challengesTab = cat; challengesPage = 0; renderChallenges(); });
       tabs.appendChild(tb);
     });
+    // Ensure the selected tab exists in the current cats list
+    if(!cats.includes(challengesTab)) challengesTab = 'Strength';
     wrap.appendChild(tabs);
     // content area for selected tab
     const content = document.createElement('div'); content.className = 'challenge-tab-content';
-    const list = CHALLENGES.filter(c=> (c.category || 'Uncategorized') === challengesTab);
+    // Build list for the active tab. For 'Fighting Skills', hide items already completed by the user.
+    let list = CHALLENGES.filter(c=> (c.category || 'Uncategorized') === challengesTab);
+    if(challengesTab === 'Fighting Skills'){
+      list = list.filter(ch => !(state.challenges && state.challenges[ch.id]));
+    }
     if(list.length === 0){ const p = document.createElement('div'); p.className = 'req-item'; p.textContent = 'No challenges in this category.'; content.appendChild(p); }
-    list.forEach(ch=>{
-      const done = !!(state.challenges && state.challenges[ch.id]);
-      const div = document.createElement('div'); div.className = 'challenge';
-      const btn = document.createElement('button'); btn.className = 'task-btn'; btn.type='button'; btn.dataset.id = ch.id; btn.dataset.xp = ch.xp;
-      btn.innerHTML = `<span class="task-main">${ch.label} — ${ch.amount}</span><span class="task-check">✓</span>`;
-      if(done) btn.classList.add('completed'); btn.disabled = !!done;
-      btn.addEventListener('click', ()=>{
-        state.challenges = state.challenges || {}; state.challenges[ch.id] = true;
-        try{ showXPPopup(ch.xp); }catch(e){}
-        try{ grantXP(ch.xp); }catch(e){}
-        try{ saveState(); }catch(e){}
-        try{ rollLearnSkill('challenge'); }catch(e){}
-        try{ renderChallenges(); }catch(e){}
+    else {
+      // paginate the list
+      const totalPages = Math.max(1, Math.ceil(list.length / CHALLENGES_PER_PAGE));
+      if(challengesPage < 0) challengesPage = 0;
+      if(challengesPage > totalPages - 1) challengesPage = totalPages - 1;
+      const start = challengesPage * CHALLENGES_PER_PAGE;
+      const end = Math.min(list.length, start + CHALLENGES_PER_PAGE);
+      const pageItems = list.slice(start, end);
+      const listWrap = document.createElement('div'); listWrap.className = 'challenge-list';
+      pageItems.forEach(ch=>{
+        const done = !!(state.challenges && state.challenges[ch.id]);
+        const div = document.createElement('div'); div.className = 'challenge';
+        const btn = document.createElement('button'); btn.className = 'task-btn'; btn.type='button'; btn.dataset.id = ch.id; btn.dataset.xp = ch.xp;
+        btn.innerHTML = `<span class="task-main">${ch.label} — ${ch.amount}</span><span class="task-check">✓</span>`;
+        if(done) btn.classList.add('completed'); btn.disabled = !!done;
+        btn.addEventListener('click', ()=>{
+          state.challenges = state.challenges || {}; state.challenges[ch.id] = true;
+          // store completion date for daily-resettable challenges
+          if(DAILY_CHALLENGE_IDS.has(ch.id)){
+            state.challengeCompletionDate = state.challengeCompletionDate || {};
+            state.challengeCompletionDate[ch.id] = todayKey();
+          }
+          // store completion week for weekly-resettable challenges
+          if(WEEKLY_CHALLENGE_IDS.has(ch.id)){
+            state.challengeCompletionWeek = state.challengeCompletionWeek || {};
+            state.challengeCompletionWeek[ch.id] = weekKey();
+          }
+          try{ showXPPopup(ch.xp); }catch(e){}
+          try{ grantXP(ch.xp); }catch(e){}
+          try{ saveState(); }catch(e){}
+          try{ rollLearnSkill('challenge'); }catch(e){}
+          try{ checkProgressionUpgrades('challenge'); }catch(e){ console.warn('checkProgressionUpgrades after challenge failed', e); }
+          try{ renderChallenges(); }catch(e){}
+        });
+        div.appendChild(btn); listWrap.appendChild(div);
       });
-      div.appendChild(btn); content.appendChild(div);
-    });
+      content.appendChild(listWrap);
+      // pager
+      const pager = document.createElement('div'); pager.className = 'challenge-pager';
+      const prev = document.createElement('button'); prev.type='button'; prev.textContent='Prev';
+      const next = document.createElement('button'); next.type='button'; next.textContent='Next';
+      const indicator = document.createElement('span'); indicator.className = 'page-indicator'; indicator.textContent = `${challengesPage + 1} / ${totalPages}`;
+      prev.disabled = (challengesPage <= 0);
+      next.disabled = (challengesPage >= totalPages - 1);
+      prev.addEventListener('click', ()=>{ if(challengesPage > 0) { challengesPage--; renderChallenges(); } });
+      next.addEventListener('click', ()=>{ if(challengesPage < totalPages - 1) { challengesPage++; renderChallenges(); } });
+      pager.appendChild(prev); pager.appendChild(indicator); pager.appendChild(next);
+      content.appendChild(pager);
+    }
     wrap.appendChild(content);
   }catch(e){
     console.warn('renderChallenges failed', e);
     try{
       // fallback grouped static HTML
-      const cats = ['Strength','Fighting Skills','Cardio','Flexibility'];
+      const cats = ['Strength'];
+      if(state.level >= 10 || (state.unlockedCategories && state.unlockedCategories['Fighting Skills'])) cats.push('Fighting Skills');
+      cats.push('Cardio','Flexibility');
       wrap.innerHTML = cats.map(cat=>{
-        const items = CHALLENGES.filter(c=> (c.category||'Uncategorized') === cat);
+        let items = CHALLENGES.filter(c=> (c.category||'Uncategorized') === cat);
+        // For fallback rendering, also hide completed Fighting Skills challenges
+        if(cat === 'Fighting Skills') items = items.filter(ch => !(state.challenges && state.challenges[ch.id]));
         const html = items.map(ch=>`<div class="challenge"><button class="task-btn" data-id="${ch.id}" data-xp="${ch.xp}"><span class="task-main">${ch.label} — ${ch.amount}</span><span class="task-check">✓</span></button></div>`).join('');
         return `<div class="req-header">${cat}</div>${html}`;
       }).join('');
@@ -1133,10 +1470,15 @@ function render(){
     btnWsi.setAttribute('aria-pressed', done ? 'true' : 'false');
   }
 
+  // Render unlockable Tasks (Daily at level 5, Weekly at level 8)
+  // unlockable tasks removed
+
   // Render equipment panel
   try{ renderEquipmentPanel(); }catch(e){ console.warn('renderEquipmentPanel failed', e); }
   try{ renderSkillsPanel(); }catch(e){ console.warn('renderSkillsPanel failed', e); }
 }
+
+// unlockable Daily/Weekly tasks removed; no rendering needed
 
 function renderSkillsPanel(){
   const grid = document.getElementById('skills-grid');
@@ -1273,8 +1615,20 @@ function grantXP(amount){
     ['str','agi','per','vit','int'].forEach(k=>{ deltas[k] = (state.stats[k] || 0) - (oldStats[k] || 0); });
     try{ showStatPopup(deltas); }catch(e){}
     try{ showLevelUpParticles(); }catch(e){}
+    try{ showLevelUpPopup(state.level); }catch(e){}
+    // Unlock Fighting Skills at level 5 and congratulate the player
+    try{
+      state.unlockedCategories = state.unlockedCategories || {};
+      if(state.level >= 10 && !state.unlockedCategories['Fighting Skills']){
+        state.unlockedCategories['Fighting Skills'] = true;
+        try{ saveState(); }catch(e){ console.warn('saveState failed when unlocking category', e); }
+        try{ showUnlockPopup('Fighting Skills'); }catch(e){ console.warn('showUnlockPopup failed', e); }
+      }
+    }catch(e){ console.warn('Unlock check failed', e); }
+    // Unlockable tasks removed; no task unlocks
   }
   saveState();
+  try{ checkProgressionUpgrades('xp'); }catch(e){ console.warn('checkProgressionUpgrades after XP failed', e); }
   render();
 }
 
@@ -1606,6 +1960,9 @@ function showLevelUpParticles(){ spawnParticles('levelup', 24); }
 function showBattleParticles(win){ if(win) spawnParticles('victory', 18); else spawnParticles('defeat', 14); }
 
 function toggleTask(key, completed, xpReward){
+  // ensure task key exists for older saves
+  state.tasks = state.tasks || {};
+  if(!state.tasks[key]) state.tasks[key] = { completed: false };
   if(completed && !state.tasks[key].completed){
     state.tasks[key].completed = true;
     // show animated XP popup when marking completed, then grant XP
@@ -1749,6 +2106,12 @@ function resetAll(){
 window.addEventListener('DOMContentLoaded', async ()=>{
   // load persisted state before wiring UI so render/events use loaded values
   try{ await initState(); }catch(e){ console.warn('initState failed', e); }
+  // Ensure daily challenges are expired appropriately on load
+  try{ expireDailyChallenges(); }catch(e){ console.warn('expireDailyChallenges on load failed', e); }
+  // Ensure weekly challenges are expired appropriately on load
+  try{ expireWeeklyChallenges(); }catch(e){ console.warn('expireWeeklyChallenges on load failed', e); }
+  // Apply any progression upgrades if conditions already satisfied
+  try{ checkProgressionUpgrades('load'); }catch(e){ console.warn('checkProgressionUpgrades on load failed', e); }
   // runtime JS badge removed to keep UI clean
   document.getElementById('increase-level').addEventListener('click', ()=>changeLevel(1));
   document.getElementById('decrease-level').addEventListener('click', ()=>changeLevel(-1));
@@ -1844,10 +2207,19 @@ window.addEventListener('DOMContentLoaded', async ()=>{
         const ch = (Array.isArray(CHALLENGES) && CHALLENGES.find(c=>c.id === cid));
         if(!ch) return;
         state.challenges[cid] = true;
+        if(DAILY_CHALLENGE_IDS.has(cid)){
+          state.challengeCompletionDate = state.challengeCompletionDate || {};
+          state.challengeCompletionDate[cid] = todayKey();
+        }
+        if(WEEKLY_CHALLENGE_IDS.has(cid)){
+          state.challengeCompletionWeek = state.challengeCompletionWeek || {};
+          state.challengeCompletionWeek[cid] = weekKey();
+        }
         showXPPopup(ch.xp);
         grantXP(ch.xp);
         try{ saveState(); }catch(e){ console.warn('saveState failed on challenge click', e); }
         try{ rollLearnSkill('challenge'); }catch(e){ console.warn('rollLearnSkill failed on delegated challenge', e); }
+        try{ checkProgressionUpgrades('challenge'); }catch(e){ console.warn('checkProgressionUpgrades after challenge failed', e); }
         try{ renderChallenges(); }catch(e){ console.warn('renderChallenges failed', e); }
       });
     }
