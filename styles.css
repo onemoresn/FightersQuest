@@ -216,7 +216,14 @@ body{font-family:Inter,system-ui,Arial;background:#07121a;color:#dff6ff;}
 .tab-button{background:linear-gradient(90deg,#4fd3ff,#2ea8ff);border:none;color:#021a1a;padding:8px 12px;border-radius:14px;font-weight:700;cursor:pointer;box-shadow:0 8px 18px rgba(14,160,255,0.06);transition:transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease;flex:0 0 auto}
 .tab-button:hover{transform:translateY(-3px);box-shadow:0 12px 30px rgba(14,160,255,0.12)}
 .tab-button.active{background:linear-gradient(90deg,#ff7b7b,#ff4d4d);color:#ffffff;box-shadow:0 18px 46px rgba(255,100,80,0.22);border:1px solid rgba(255,120,90,0.12)}
+.tab-button.locked{opacity:0.56;cursor:default;box-shadow:none;transform:none}
 .challenge-tab-content{margin-top:6px}
+/* Challenge list scroll + pager */
+.challenge-list{max-height:300px;overflow-y:auto;overflow-x:hidden;padding-right:8px;display:flex;flex-direction:column;gap:8px}
+.challenge-pager{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:10px}
+.challenge-pager button{background:rgba(255,255,255,0.03);border:1px solid rgba(150,220,255,0.06);color:#cfefff;padding:6px 10px;border-radius:6px;cursor:pointer}
+.challenge-pager button[disabled]{opacity:0.45;cursor:default}
+.challenge-pager .page-indicator{color:#a8e6ff;font-weight:700}
 
 /* Icon spacing inside tab buttons */
 .tab-icon{display:inline-block;margin-right:8px;font-size:16px}
@@ -339,6 +346,11 @@ body{font-family:Inter,system-ui,Arial;background:#07121a;color:#dff6ff;}
 .card-bar .val{font-size:13px;color:#dff6ff;width:72px;text-align:right}
 .bar-bg.small{height:12px;border-radius:8px;flex:1;overflow:hidden;background:linear-gradient(90deg,#071a1f,#041015);border:1px solid rgba(255,255,255,0.02)}
 .battle-log{min-height:90px;background:linear-gradient(180deg,rgba(0,0,0,0.25),rgba(0,0,0,0.15));border-radius:8px;padding:10px;color:#dff6ff;font-family:monospace}
+/* keep long battle logs scrollable */
+.battle-log{max-height:180px;overflow-y:auto;overflow-x:hidden;white-space:pre-wrap;padding-right:12px}
+
+/* also ensure any id-based log element uses the same behavior */
+#battle-log, #battle-area-log{max-height:180px;overflow-y:auto;overflow-x:hidden;white-space:pre-wrap;padding-right:12px}
 .battle-actions{display:flex;gap:12px;justify-content:space-between;margin-top:8px}
 .fight-btn.defend{background:linear-gradient(90deg,#0ea0ff,#3bd3ff)}
 
