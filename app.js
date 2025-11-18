@@ -27,6 +27,8 @@ const defaultState = {
   equipment: {},
   // track which guides the user has seen per screen
   seenGuides: {},
+  // selected character avatar key (C1 or C2)
+  avatarKey: 'C1',
   taskBase: {
     dailyJumpingJacks: 25,
     weeklyPushups: 25,
@@ -104,10 +106,8 @@ async function initState(){
     const raw = await storageAdapter.getItem(STORAGE_KEY);
     if(raw){
       const parsed = JSON.parse(raw);
-      // ensure avatar field exists if migrated stores include it
-      if(parsed && parsed.avatar && typeof parsed.avatar === 'string'){
-        // leave as-is
-      }
+      // migrate legacy avatar (custom image) to avatarKey default if missing
+      if(!parsed.avatarKey){ parsed.avatarKey = 'C1'; }
       // migrate older numeric stamina into {cur,max}
       if(parsed.hasOwnProperty('stamina')){
         if(typeof parsed.stamina === 'number'){
@@ -876,6 +876,12 @@ function showScreen(id){
   if(bread) bread.textContent = id.replace('screen-','').toUpperCase();
   // show contextual guide for this screen if the user hasn't dismissed it
   try{ showGuide(id); }catch(e){ console.warn('showGuide failed', e); }
+  // apply screen-specific backgrounds
+  try{
+    if(id === 'screen-stats') setStatsBackground();
+    if(id === 'screen-battle') setBattleBackground();
+    if(id === 'screen-tasks' || id === 'screen-challenges' || id === 'screen-quests') setScreenMainBG(id);
+  }catch(e){ console.warn('screen background set failed', e); }
 }
 
 // Create and show a small dismissible guide box for a given screen id
@@ -1112,6 +1118,7 @@ function startBattle(quest){
       stam: { cur: (state.stamina && state.stamina.cur) || 0, max: (state.stamina && state.stamina.max) || 100 }
     },
     playerDefending: false,
+    playerPose: 'idle',
     log: []
   };
   // set the portrait in the battle UI to match the quest card
@@ -1119,6 +1126,8 @@ function startBattle(quest){
     const ePortrait = document.getElementById('battle-enemy-portrait');
     if(ePortrait) ePortrait.innerHTML = getPortraitForQuest(quest);
   }catch(e){console.warn('Could not set battle portrait', e)}
+  // set battle background based on current dungeons page (1-based)
+  try{ setBattleBackground(); }catch(e){ console.warn('setBattleBackground failed', e); }
   // switch screens
   renderBattle();
   showScreen('screen-battle');
@@ -1133,6 +1142,8 @@ function appendBattleLog(text){
 
 function renderBattle(){
   if(!battleState) return;
+  // ensure background stays in sync with page if user changed pages before entering
+  try{ setBattleBackground(); }catch(e){}
   // player
   const pLv = document.getElementById('battle-player-level');
   if(pLv) pLv.textContent = state.level;
@@ -1140,11 +1151,10 @@ function renderBattle(){
   try{
     const pPortrait = document.getElementById('battle-player-portrait');
     if(pPortrait){
-      if(state.avatar && typeof state.avatar === 'string' && state.avatar.length > 20){
-        pPortrait.innerHTML = `<img src="${state.avatar}" class="card-portrait-img" alt="Player avatar"/>`;
-      } else {
-        pPortrait.innerHTML = '🙂';
-      }
+      const key = state.avatarKey || 'C1';
+      const pose = (battleState && battleState.playerPose) || 'idle';
+      const src = getBattlePoseSrc(key, pose);
+      pPortrait.innerHTML = `<img src="${src}" class="card-portrait-img" alt="Player avatar"/>`;
     }
   }catch(e){console.warn('set player portrait failed', e)}
   const pHpFill = document.getElementById('battle-player-hp');
@@ -1162,6 +1172,58 @@ function renderBattle(){
   if(eHpText) eHpText.textContent = `${Math.max(0,Math.round(battleState.enemy.hp.cur))} / ${battleState.enemy.hp.max}`;
   // update log area
   const el = document.getElementById('battle-area-log'); if(el) el.textContent = battleState.log.join('\n');
+}
+
+// Return the appropriate battle image path for the selected character and pose
+function getBattlePoseSrc(key, pose){
+  const k = key === 'C2' ? 'C2' : 'C1';
+  if(pose === 'punch'){
+    return `Asset/Character/${k}_Punching.gif`;
+  }
+  // default idle
+  return `Asset/Character/${k}_FStance.gif`;
+}
+
+// Update current battle player pose and keep it in state
+function setBattlePlayerPose(pose){
+  if(!battleState) return;
+  battleState.playerPose = (pose === 'punch') ? 'punch' : 'idle';
+}
+
+// Set the battle screen background image according to current dungeon pagination
+function setBattleBackground(){
+  const pageIndex = typeof dungeonsPage === 'number' ? dungeonsPage : 0; // 0-based
+  const pageNumber = pageIndex + 1; // 1-based for file naming
+  const battleScreen = document.getElementById('screen-battle');
+  if(!battleScreen) return;
+  const card = battleScreen.querySelector('.status-card');
+  if(!card) return;
+  const candidates = [
+    `Asset/Dungeon/Dungeon${pageNumber}.png`,
+    `Asset/Dungeon/Dungeon${pageNumber}.jpg`,
+    `Asset/Dungeon/Dungeon${pageNumber}.jpeg`,
+    `Asset/Dungeon/${pageNumber}.png`,
+    `Asset/Dungeon/${pageNumber}.jpg`
+  ];
+  const gradient = 'linear-gradient(rgba(8,18,26,0.55), rgba(5,12,16,0.65))';
+  // Optimistically set first candidate; then verify and fallback if it fails
+  function apply(path){
+    card.style.backgroundImage = `${gradient}, url('${path}')`;
+    card.style.backgroundSize = 'cover';
+    card.style.backgroundPosition = 'center';
+    card.style.backgroundRepeat = 'no-repeat';
+  }
+  // Preload and pick the first that succeeds
+  let picked = false; let tried = 0;
+  candidates.forEach(src=>{
+    const img = new Image();
+    img.onload = ()=>{ if(!picked){ picked = true; apply(src); } };
+    img.onerror = ()=>{ tried++; if(tried === candidates.length && !picked){
+      // fallback: gradient only
+      card.style.backgroundImage = gradient;
+    } };
+    img.src = src;
+  });
 }
 
 function startDungeon(dungeon){
@@ -1194,6 +1256,9 @@ function renderDungeon(){
 
 async function playerAttack(){
   if(!battleState) return;
+  // switch to punching pose
+  setBattlePlayerPose('punch');
+  renderBattle();
   // include temporary battle buffs (e.g., Berserk)
   let buffStr = 0;
   if(battleState.playerBuffs && Array.isArray(battleState.playerBuffs)){
@@ -1208,6 +1273,8 @@ async function playerAttack(){
   appendBattleLog(`You attack for ${dmg} damage.`);
   renderBattle();
   if(battleState.enemy.hp.cur <= 0){
+    // revert to idle even if battle ends
+    setTimeout(()=>{ setBattlePlayerPose('idle'); renderBattle(); }, 300);
     await endBattle(true);
     return;
   }
@@ -1215,6 +1282,8 @@ async function playerAttack(){
   const mpCost = Math.min(battleState.player.mp.cur, Math.ceil((battleState.enemy.level || 1)));
   battleState.player.mp.cur = Math.max(0, battleState.player.mp.cur - mpCost);
   appendBattleLog(`You used ${mpCost} MP.`);
+  // revert to idle shortly after the punch
+  setTimeout(()=>{ setBattlePlayerPose('idle'); renderBattle(); }, 400);
   // enemy turn
   await enemyTurn();
 }
@@ -1476,6 +1545,48 @@ function render(){
   // Render equipment panel
   try{ renderEquipmentPanel(); }catch(e){ console.warn('renderEquipmentPanel failed', e); }
   try{ renderSkillsPanel(); }catch(e){ console.warn('renderSkillsPanel failed', e); }
+}
+
+// Apply background image for the Stats screen
+function setStatsBackground(){
+  const screen = document.getElementById('screen-stats');
+  if(!screen) return;
+  const card = screen.querySelector('.status-card');
+  if(!card) return;
+  const path = 'Asset/MainBG.png';
+  const gradient = 'linear-gradient(rgba(8,18,26,0.55), rgba(5,12,16,0.65))';
+  const img = new Image();
+  img.onload = ()=>{
+    card.style.backgroundImage = `${gradient}, url('${path}')`;
+    // Use 'contain' so the full graphic (including title) is visible
+    card.style.backgroundSize = 'contain';
+    // Anchor to top center so the title sits fully in view
+    card.style.backgroundPosition = 'top center';
+    card.style.backgroundRepeat = 'no-repeat';
+  };
+  img.onerror = ()=>{
+    // keep existing background gradient if missing
+  };
+  img.src = path;
+}
+
+// Apply the same MainBG.png to other main screens (Tasks / Challenges / Quests)
+function setScreenMainBG(screenId){
+  const screen = document.getElementById(screenId);
+  if(!screen) return;
+  const card = screen.querySelector('.status-card');
+  if(!card) return;
+  const path = 'Asset/MainBG.png';
+  const gradient = 'linear-gradient(rgba(8,18,26,0.55), rgba(5,12,16,0.65))';
+  const img = new Image();
+  img.onload = ()=>{
+    card.style.backgroundImage = `${gradient}, url('${path}')`;
+    card.style.backgroundSize = 'contain';
+    card.style.backgroundPosition = 'top center';
+    card.style.backgroundRepeat = 'no-repeat';
+  };
+  img.onerror = ()=>{};
+  img.src = path;
 }
 
 // unlockable Daily/Weekly tasks removed; no rendering needed
@@ -2169,30 +2280,8 @@ window.addEventListener('DOMContentLoaded', async ()=>{
   const nextQ = document.getElementById('quests-next');
   if(nextQ) nextQ.addEventListener('click', ()=>changeQuestsPage(1));
   // avatar upload wiring
-  const avatarInput = document.getElementById('player-avatar-input');
   const avatarImg = document.getElementById('player-avatar-img');
-  if(avatarImg){
-    // click avatar image to open file picker
-    avatarImg.addEventListener('click', ()=>{ if(avatarInput) avatarInput.click(); });
-  }
-  if(avatarInput){
-    avatarInput.addEventListener('change', async (ev)=>{
-      const f = avatarInput.files && avatarInput.files[0];
-      if(!f) return;
-      try{
-        const reader = new FileReader();
-        reader.onload = async function(e){
-          const data = e.target.result;
-          // save data url into state
-          state.avatar = data;
-          try{ await saveState(); }catch(e){console.warn('save avatar failed', e)}
-          // update UI
-          if(avatarImg) avatarImg.src = data;
-        };
-        reader.readAsDataURL(f);
-      }catch(e){console.warn('avatar read failed', e)}
-    });
-  }
+  // Set avatar image based on selection key
   // Delegate clicks inside challenges list to handle static fallback or dynamically created buttons
   try{
     const challengesWrap = document.getElementById('challenges-list');
@@ -2233,12 +2322,8 @@ window.addEventListener('DOMContentLoaded', async ()=>{
   try{
     const aImg = document.getElementById('player-avatar-img');
     if(aImg){
-      if(state.avatar && typeof state.avatar === 'string' && state.avatar.length > 20){
-        aImg.src = state.avatar;
-      } else {
-        // fallback avatar (small emoji as data URL using SVG) - we can use a simple inline SVG data URI
-        aImg.src = 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect fill="#082023" width="100%" height="100%" rx="8"/><text x="50%" y="54%" font-size="36" text-anchor="middle" fill="#dff6ff" font-family="Arial">🙂</text></svg>');
-      }
+      const key = state.avatarKey || 'C1';
+      aImg.src = key === 'C2' ? 'Asset/Character/C2.gif' : 'Asset/Character/C1.gif';
     }
   }catch(e){console.warn('set avatar preview failed', e)}
   // wire Ability Points allocator: clicking the available value opens allocator
@@ -2257,6 +2342,26 @@ window.addEventListener('DOMContentLoaded', async ()=>{
     const invBtn = document.getElementById('open-inventory');
     if(invBtn){ invBtn.addEventListener('click', ()=>{ showInventoryModal({ inBattle: false }); }); }
   }catch(e){ console.warn('wire inventory failed', e); }
+  // wire Character select navigation
+  try{
+    const charBtn = document.getElementById('open-character-select');
+    if(charBtn){ charBtn.addEventListener('click', ()=>{ showScreen('screen-character'); }); }
+    const backChar = document.getElementById('back-from-character');
+    if(backChar){ backChar.addEventListener('click', ()=>{ showScreen('screen-stats'); }); }
+    const c1 = document.getElementById('char-c1');
+    const c2 = document.getElementById('char-c2');
+    function selectChar(key){ state.avatarKey = key; saveState();
+      try{
+        const a = document.getElementById('player-avatar-img');
+        if(a) a.src = key === 'C2' ? 'Asset/Character/C2.gif' : 'Asset/Character/C1.gif';
+      }catch(e){}
+      // also refresh battle portrait if on that screen later
+      render();
+      showScreen('screen-stats');
+    }
+    if(c1){ c1.addEventListener('click', ()=>selectChar('C1')); }
+    if(c2){ c2.addEventListener('click', ()=>selectChar('C2')); }
+  }catch(e){ console.warn('wire character select failed', e); }
   // wire Battle Use Item button
   try{
     const battleUse = document.getElementById('battle-use-item');
