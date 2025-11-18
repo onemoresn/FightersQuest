@@ -26,8 +26,7 @@
             <div class="status-top">
               <div class="level">
                 <div class="avatar-upload" id="avatar-upload">
-                  <img id="player-avatar-img" class="player-avatar" src="" alt="Avatar" title="Click to upload" />
-                  <input id="player-avatar-input" type="file" accept="image/*" style="display:none" />
+                  <img id="player-avatar-img" class="player-avatar" src="" alt="Avatar" />
                 </div>
                 <div>
                   <div class="level-number" id="level-number">18</div>
@@ -42,6 +41,7 @@
                 <button id="increase-level">+</button>
                 <button id="reset-all">Reset All</button>
                 <button id="open-inventory">Inventory</button>
+                <button id="open-character-select">Character</button>
               </div>
             </div>
           </div>
@@ -254,6 +254,26 @@
               <button id="battle-use-item" class="fight-btn">Use Item</button>
               <button id="battle-use-skill" class="fight-btn">Use Skill</button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Character Select screen -->
+      <div id="screen-character" class="screen hidden">
+        <div class="status-card">
+          <div class="status-title">CHARACTER SELECT</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-top:12px">
+            <div class="card" style="cursor:pointer" id="char-c1" data-key="C1">
+              <div class="card-title">C1</div>
+              <img src="Asset/Character/C1.gif" alt="C1" style="width:120px;height:120px;object-fit:contain;border-radius:10px;background:#07121a" />
+            </div>
+            <div class="card" style="cursor:pointer" id="char-c2" data-key="C2">
+              <div class="card-title">C2</div>
+              <img src="Asset/Character/C2.gif" alt="C2" style="width:120px;height:120px;object-fit:contain;border-radius:10px;background:#07121a" />
+            </div>
+          </div>
+          <div style="margin-top:12px">
+            <button id="back-from-character">Back</button>
           </div>
         </div>
       </div>
