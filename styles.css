@@ -3,7 +3,9 @@ html,body{height:100%}
 body{font-family:Inter,system-ui,Arial;background:#07121a;color:#dff6ff;}
 .app-bg{background:radial-gradient(ellipse at top left,#0b2a3a 0%,#031018 40%,#000 100%);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
 .container{width:100%;max-width:980px}
-.status-card{border:1px solid rgba(120,210,255,0.12);padding:28px;border-radius:8px;background:linear-gradient(180deg,rgba(10,18,24,0.35),rgba(6,12,16,0.25));box-shadow:0 8px 24px rgba(0,0,0,0.6);backdrop-filter:blur(3px);position:relative}
+.status-card{border:1px solid rgba(120,210,255,0.12);padding:28px;border-radius:8px;background:linear-gradient(180deg,rgba(10,18,24,0.35),rgba(6,12,16,0.25));box-shadow:0 8px 24px rgba(0,0,0,0.6);backdrop-filter:blur(3px);position:relative;transition:background-image 400ms ease, background 400ms ease}
+/* Battle screen background overrides (dynamic images + overlay gradient applied inline) */
+#screen-battle .status-card{transition:background-image 400ms ease, background 400ms ease}
 .status-title{text-align:center;font-family:Orbitron,monospace;color:#cfefff;letter-spacing:6px;padding-bottom:6px;border-bottom:1px solid rgba(200,240,255,0.04);font-size:18px}
 .status-top{display:flex;align-items:center;justify-content:space-between;margin-top:18px}
 .level{display:flex;gap:16px;align-items:center}
